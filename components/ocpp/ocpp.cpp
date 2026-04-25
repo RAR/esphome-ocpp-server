@@ -148,6 +148,27 @@ void OcppCp::register_callbacks_() {
     setEvseReadyInput([this]() -> bool { return this->is_evse_ready_(); });
   }
 
+  // SmartCharging output registration MUST come before the SetChargingProfile /
+  // ClearChargingProfile observers below — MicroOcpp lazily creates
+  // SmartChargingService inside setSmartChargingPowerOutput, and that's what
+  // registers those two operations in OperationRegistry. setOnReceiveRequest
+  // for an unregistered operation silently fails (only an MO_DBG_ERR at debug
+  // level), so swapping the order here is what ultimately wires the observer
+  // up to a real handler.
+  // current_limit_A == -1.0f / power_limit_W == -1.0f means "no limit" (pass
+  // through hardware default). limit==0 from the engine never actually fires
+  // for evcc-style `SetChargingProfile{limit:0}` because MO interprets that
+  // as "no constraint" — see the SetChargingProfile observer for the real
+  // disable-detection path.
+  setSmartChargingCurrentOutput([this](float current_limit_a) {
+    ESP_LOGD(TAG, "SmartCharging current limit: %.1f A", current_limit_a);
+    for (auto &cb : charging_profile_callbacks_) cb(current_limit_a, -1.0f, -1);
+  });
+  setSmartChargingPowerOutput([this](float power_limit_w) {
+    ESP_LOGD(TAG, "SmartCharging power limit: %.1f W", power_limit_w);
+    for (auto &cb : charging_profile_callbacks_) cb(-1.0f, power_limit_w, -1);
+  });
+
   // RemoteStart/RemoteStopTransaction observers — purely for INFO-level
   // diagnostic logging on the request edge. The user-facing on_remote_start /
   // on_remote_stop YAML triggers fire later from setTxNotificationOutput()
@@ -314,18 +335,6 @@ void OcppCp::register_callbacks_() {
   setOnReceiveRequest("UnlockConnector", [this](JsonObject payload) {
     int connector_id = payload["connectorId"] | 1;
     for (auto &cb : unlock_callbacks_) cb(connector_id);
-  });
-
-  // SmartCharging — MO computes an effective limit from the active stack of
-  // ChargingProfiles and invokes this callback whenever the value changes.
-  // current_limit_A == -1.0f means "no limit" (pass through hardware default).
-  setSmartChargingCurrentOutput([this](float current_limit_a) {
-    ESP_LOGD(TAG, "SmartCharging current limit: %.1f A", current_limit_a);
-    for (auto &cb : charging_profile_callbacks_) cb(current_limit_a, -1.0f, -1);
-  });
-  setSmartChargingPowerOutput([this](float power_limit_w) {
-    ESP_LOGD(TAG, "SmartCharging power limit: %.1f W", power_limit_w);
-    for (auto &cb : charging_profile_callbacks_) cb(-1.0f, power_limit_w, -1);
   });
 }
 
