@@ -42,7 +42,11 @@ void OcppCp::setup() {
   // OCPP 1.6 optional standard key. evcc and other CSMSes try to set this on
   // every CP; declaring it makes ChangeConfiguration return Accepted. We don't
   // honour the value — the WsClient pings at a fixed 20 s cadence regardless.
-  MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20);
+  // Must live in CONFIGURATION_VOLATILE (in-memory) since we run with
+  // MO_USE_FILEAPI=DISABLE_FS — the default file-backed store silently drops
+  // the declaration when the FS adapter isn't available.
+  MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20,
+                                       CONFIGURATION_VOLATILE);
 
   register_callbacks_();
   initialized_ = true;
