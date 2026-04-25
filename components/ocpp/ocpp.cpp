@@ -7,6 +7,8 @@
 
 #include <MicroOcpp.h>
 #include <MicroOcpp/Core/Configuration.h>
+#include <MicroOcpp/Model/ConnectorBase/Notification.h>
+#include <MicroOcpp/Model/Transactions/Transaction.h>
 
 #include "ws_client.h"
 #include "mo_connection.h"
@@ -99,17 +101,76 @@ void OcppCp::register_callbacks_() {
     setEvseReadyInput([this]() -> bool { return this->is_evse_ready_(); });
   }
 
-  // Automation hooks — wired to the `on_remote_start` / `on_remote_stop` / `on_reset`
-  // / `on_unlock_connector` triggers in the YAML. These run as observers; MO still
-  // handles the protocol-level response and transaction begin/end internally, so
-  // the user's lambda is purely for hardware-side actions (relay, restart).
-  setOnReceiveRequest("RemoteStartTransaction", [this](JsonObject payload) {
+  // RemoteStart/RemoteStopTransaction observers — purely for INFO-level
+  // diagnostic logging on the request edge. The user-facing on_remote_start /
+  // on_remote_stop YAML triggers fire later from setTxNotificationOutput()
+  // below, on the *transaction lifecycle* (StartTx/StopTx) rather than on
+  // request receipt — see comment there.
+  setOnReceiveRequest("RemoteStartTransaction", [](JsonObject payload) {
     std::string id_tag = payload["idTag"] | "";
-    for (auto &cb : remote_start_callbacks_) cb(id_tag);
+    int connector_id = payload["connectorId"] | 1;
+    ESP_LOGI(TAG, "RemoteStartTransaction received: idTag='%s' connector=%d",
+             id_tag.c_str(), connector_id);
   });
-  setOnReceiveRequest("RemoteStopTransaction", [this](JsonObject payload) {
+  setOnReceiveRequest("RemoteStopTransaction", [](JsonObject payload) {
     int tx_id = payload["transactionId"] | 0;
-    for (auto &cb : remote_stop_callbacks_) cb(tx_id);
+    ESP_LOGI(TAG, "RemoteStopTransaction received: transactionId=%d", tx_id);
+  });
+
+  // Transaction lifecycle hook. setOnReceiveRequest fires the moment the
+  // request hits the wire, *regardless of whether MO accepts it* — so a
+  // RemoteStart for a Faulted/Unavailable connector would still trip the
+  // user's lambda and tell the MCU to start charging into a dead state.
+  // setTxNotificationOutput fires only on real transaction transitions:
+  //   StartTx → connector has all conditions (plugged + EV ready + EVSE ready
+  //             + authorized + operative) and is sending StartTransaction.req
+  //   StopTx  → connector is ending the active transaction
+  // RemoteStart/RemoteStop (capitalised) just mean "the request was accepted
+  // and a transaction was begun/ended at the MO level"; we log them at INFO
+  // for visibility but they don't drive the hardware.
+  setTxNotificationOutput([this](MicroOcpp::Transaction *tx,
+                                 MicroOcpp::TxNotification notification) {
+    using N = MicroOcpp::TxNotification;
+    int tx_id = tx ? tx->getTransactionId() : -1;
+    const char *id_tag = (tx && tx->getIdTag()) ? tx->getIdTag() : "";
+    switch (notification) {
+      case N::RemoteStart:
+        ESP_LOGI(TAG, "RemoteStart accepted: idTag='%s' tx=%d (waiting for "
+                       "plug + EV/EVSE ready before StartTransaction)",
+                 id_tag, tx_id);
+        break;
+      case N::RemoteStop:
+        ESP_LOGI(TAG, "RemoteStop accepted: tx=%d", tx_id);
+        break;
+      case N::StartTx:
+        ESP_LOGI(TAG, "StartTransaction triggered: idTag='%s' tx=%d", id_tag,
+                 tx_id);
+        for (auto &cb : remote_start_callbacks_) cb(std::string(id_tag));
+        break;
+      case N::StopTx:
+        ESP_LOGI(TAG, "StopTransaction triggered: tx=%d", tx_id);
+        for (auto &cb : remote_stop_callbacks_) cb(tx_id);
+        break;
+      case N::ConnectionTimeout:
+        ESP_LOGW(TAG, "Transaction aborted: ConnectionTimeout (no plug "
+                       "detected within ConnectionTimeOut s)");
+        break;
+      case N::AuthorizationRejected:
+        ESP_LOGW(TAG, "Transaction aborted: AuthorizationRejected (idTag '%s')",
+                 id_tag);
+        break;
+      case N::AuthorizationTimeout:
+        ESP_LOGW(TAG, "Transaction aborted: AuthorizationTimeout (CSMS offline)");
+        break;
+      case N::DeAuthorized:
+        ESP_LOGW(TAG, "Transaction aborted: DeAuthorized (CSMS rejected StartTransaction)");
+        break;
+      case N::ReservationConflict:
+        ESP_LOGW(TAG, "Transaction blocked: ReservationConflict");
+        break;
+      default:
+        break;
+    }
   });
   // Reset: MicroOcpp's internal handler aborts with "No reset handler set" if
   // we don't register an executor, so use setOnResetExecute (not the observer-
