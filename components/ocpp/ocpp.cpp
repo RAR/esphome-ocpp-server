@@ -240,6 +240,15 @@ void OcppCp::register_callbacks_() {
           ESP_LOGI(TAG, "  -> CSMS disable: forcing offered measurands to 0");
         }
         csms_disabled_ = true;
+        // If MO has an active transaction (e.g. left over from evcc's
+        // remotestart=true auto-RemoteStart on boot), end it so the connector
+        // status moves to Finishing → Available and evcc stops reading
+        // status=Charging. endTransaction is a no-op if no transaction is
+        // running, so it's safe to call unconditionally.
+        if (::isTransactionActive(1)) {
+          ESP_LOGI(TAG, "  -> ending active OCPP transaction");
+          ::endTransaction(nullptr, "Local", 1);
+        }
       } else if (first_period_positive) {
         if (csms_disabled_) {
           ESP_LOGI(TAG, "  -> CSMS re-enable: offered measurands track Number");
