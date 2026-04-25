@@ -293,9 +293,9 @@ void OcppCp::publish_connection_state_() {
       break;
     case WsClient::STATE_OPEN:
       // "ready" implies BootNotification accepted *and* the connector isn't
-      // Faulted/Unavailable. MicroOcpp::isOperative(1) covers both —
+      // Faulted/Unavailable. ::isOperative(1) covers both — MO's
       // chargePoint->isOperative() flips true on RegistrationStatus::Accepted.
-      s = MicroOcpp::isOperative(1) ? "ready" : "connected";
+      s = ::isOperative(1) ? "ready" : "connected";
       break;
     case WsClient::STATE_CLOSING:
       s = "closing";
