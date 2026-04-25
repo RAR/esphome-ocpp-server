@@ -30,7 +30,7 @@ Top-level YAML surface:
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
-from esphome.components import sensor, text_sensor
+from esphome.components import sensor, text_sensor, binary_sensor
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
 
 CODEOWNERS = ["@andrewrankin"]
@@ -64,6 +64,7 @@ CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_METER_VALUES = "meter_values"
 CONF_STATUS_FROM = "status_from"
 CONF_STATUS_MAPPING = "status_mapping"
+CONF_PLUGGED_FROM = "plugged_from"
 CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
 CONF_ON_REMOTE_START = "on_remote_start"
 CONF_ON_REMOTE_STOP = "on_remote_stop"
@@ -90,6 +91,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_STATUS_MAPPING, default={}): cv.Schema(
             {cv.string: cv.string_strict}
         ),
+        cv.Optional(CONF_PLUGGED_FROM): cv.use_id(binary_sensor.BinarySensor),
         cv.Optional(CONF_HEARTBEAT_INTERVAL): cv.positive_time_period_seconds,
         cv.Optional(CONF_ON_REMOTE_START): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteStartTrigger)}
@@ -150,6 +152,10 @@ async def to_code(config):
     if CONF_STATUS_FROM in config:
         ts = await cg.get_variable(config[CONF_STATUS_FROM])
         cg.add(var.set_status_text_sensor(ts))
+
+    if CONF_PLUGGED_FROM in config:
+        bs = await cg.get_variable(config[CONF_PLUGGED_FROM])
+        cg.add(var.set_plugged_binary_sensor(bs))
 
     for k, v in config[CONF_STATUS_MAPPING].items():
         cg.add(var.add_status_mapping(k, v))

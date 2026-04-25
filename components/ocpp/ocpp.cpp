@@ -3,6 +3,7 @@
 #include "esphome/core/log.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 
 #include <MicroOcpp.h>
 #include <MicroOcpp/Core/Configuration.h>
@@ -80,9 +81,10 @@ void OcppCp::register_callbacks_() {
 
   // Connector inputs — drive MicroOcpp's connector state machine. Without these
   // the connector stays "Available" forever and no StartTransaction ever fires.
-  // We only register them if the user actually bound a status text_sensor;
-  // otherwise MO would believe the cable is unplugged forever.
-  if (status_sensor_ != nullptr) {
+  // We only register them if the user bound at least a status text_sensor
+  // OR an explicit plugged binary_sensor; otherwise MO would believe the
+  // cable is unplugged forever.
+  if (status_sensor_ != nullptr || plugged_sensor_ != nullptr) {
     setConnectorPluggedInput([this]() -> bool { return this->is_plugged_(); });
     setEvReadyInput([this]() -> bool { return this->is_ev_ready_(); });
     setEvseReadyInput([this]() -> bool { return this->is_evse_ready_(); });
@@ -170,9 +172,15 @@ void OcppCp::poll_status_() {
 }
 
 bool OcppCp::is_plugged_() const {
-  // Plugged whenever the connector is past Available and not in a non-charging
-  // terminal state. Faulted is intentionally NOT plugged so MO surfaces the
-  // fault as Faulted-while-Available rather than Faulted-while-Charging.
+  // Prefer an explicit plugged binary_sensor when bound — many chargers (e.g.
+  // the rippleon) report a "ready"/"idle" status text that doesn't mean an EV
+  // is physically connected, so deriving plugged from status alone causes
+  // MicroOcpp to spam Preparing → SetChargingProfile → unnecessary MCU writes.
+  if (plugged_sensor_ != nullptr) {
+    return plugged_sensor_->has_state() && plugged_sensor_->state;
+  }
+  // Fallback: derive from status. Plugged whenever the connector is past
+  // Available and not in a non-charging terminal state.
   return mapped_status_ != "Available" && mapped_status_ != "Reserved" &&
          mapped_status_ != "Unavailable" && mapped_status_ != "Faulted";
 }

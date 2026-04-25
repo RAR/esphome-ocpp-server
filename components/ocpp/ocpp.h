@@ -12,6 +12,7 @@ namespace esphome {
 
 namespace sensor { class Sensor; }
 namespace text_sensor { class TextSensor; }
+namespace binary_sensor { class BinarySensor; }
 
 namespace ocpp {
 
@@ -41,6 +42,7 @@ class OcppCp : public Component {
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
   void add_status_mapping(const std::string &from, const std::string &to) { status_mapping_[from] = to; }
+  void set_plugged_binary_sensor(binary_sensor::BinarySensor *s) { plugged_sensor_ = s; }
   void set_heartbeat_interval(int seconds) { heartbeat_interval_s_ = seconds; }
 
   void add_on_remote_start_callback(std::function<void(const std::string &)> cb) {
@@ -82,6 +84,7 @@ class OcppCp : public Component {
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   text_sensor::TextSensor *status_sensor_{nullptr};
+  binary_sensor::BinarySensor *plugged_sensor_{nullptr};
   std::map<std::string, std::string> status_mapping_;
   std::string last_source_status_;
   std::string mapped_status_{"Available"};
