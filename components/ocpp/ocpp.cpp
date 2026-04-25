@@ -117,6 +117,60 @@ void OcppCp::register_callbacks_() {
     ESP_LOGI(TAG, "RemoteStopTransaction received: transactionId=%d", tx_id);
   });
 
+  // Log the raw profile from each SetChargingProfile so we can see exactly
+  // what the CSMS is asking for (purpose / unit / per-period limits). MO's
+  // SmartCharging engine still computes the effective limit and feeds it to
+  // setSmartChargingCurrentOutput / setSmartChargingPowerOutput below — this
+  // observer is purely diagnostic.
+  setOnReceiveRequest("SetChargingProfile", [](JsonObject payload) {
+    int connector_id = payload["connectorId"] | -1;
+    JsonObject prof = payload["csChargingProfiles"];
+    if (prof.isNull()) {
+      ESP_LOGW(TAG, "SetChargingProfile: missing csChargingProfiles");
+      return;
+    }
+    int profile_id = prof["chargingProfileId"] | -1;
+    const char *purpose = prof["chargingProfilePurpose"] | "?";
+    const char *kind = prof["chargingProfileKind"] | "?";
+    int stack_level = prof["stackLevel"] | -1;
+    int tx_id = prof["transactionId"] | -1;
+    JsonObject sched = prof["chargingSchedule"];
+    const char *unit = sched["chargingRateUnit"] | "?";
+    int duration = sched["duration"] | -1;
+    ESP_LOGI(TAG, "SetChargingProfile: connector=%d id=%d purpose=%s kind=%s "
+                  "stack=%d tx=%d unit=%s duration=%ds",
+             connector_id, profile_id, purpose, kind, stack_level, tx_id, unit,
+             duration);
+    JsonArray periods = sched["chargingSchedulePeriod"];
+    size_t i = 0;
+    for (JsonObject p : periods) {
+      int start = p["startPeriod"] | 0;
+      float limit = p["limit"] | 0.0f;
+      int phases = p["numberPhases"] | -1;
+      if (phases >= 0) {
+        ESP_LOGI(TAG, "  period[%u] start=+%ds limit=%.1f%s phases=%d",
+                 (unsigned) i, start, limit, unit, phases);
+      } else {
+        ESP_LOGI(TAG, "  period[%u] start=+%ds limit=%.1f%s", (unsigned) i,
+                 start, limit, unit);
+      }
+      i++;
+    }
+  });
+
+  // Same diagnostic pattern for ClearChargingProfile so a "stop charging"
+  // edge from the CSMS is visible whether it comes via RemoteStop or via
+  // profile-level pause.
+  setOnReceiveRequest("ClearChargingProfile", [](JsonObject payload) {
+    int profile_id = payload["id"] | -1;
+    int connector_id = payload["connectorId"] | -1;
+    const char *purpose = payload["chargingProfilePurpose"] | "?";
+    int stack_level = payload["stackLevel"] | -1;
+    ESP_LOGI(TAG,
+             "ClearChargingProfile: id=%d connector=%d purpose=%s stack=%d",
+             profile_id, connector_id, purpose, stack_level);
+  });
+
   // Transaction lifecycle hook. setOnReceiveRequest fires the moment the
   // request hits the wire, *regardless of whether MO accepts it* — so a
   // RemoteStart for a Faulted/Unavailable connector would still trip the
