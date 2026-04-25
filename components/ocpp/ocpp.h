@@ -65,6 +65,15 @@ class OcppCp : public Component {
     charging_profile_callbacks_.push_back(std::move(cb));
   }
 
+  // YAML-callable: end the active OCPP transaction (sends StopTransaction.req
+  // with the given reason). Used when the CSMS asks for a profile-level
+  // disable (e.g. evcc's `SetChargingProfile{limit:0,unit:W}` pause) — without
+  // closing the transaction, evcc with `remotestart: true` keys Enabled() off
+  // transaction state and never sees the disable take effect. `reason` should
+  // match OCPP 1.6 Reason enum: Local / Other / Remote / EVDisconnected /
+  // PowerLoss / Reboot / SoftReset / HardReset / DeAuthorized.
+  void end_transaction(const std::string &reason = "Local");
+
  protected:
   void init_microocpp_();
   void register_callbacks_();
@@ -92,6 +101,15 @@ class OcppCp : public Component {
   std::string last_connection_state_;
   binary_sensor::BinarySensor *plugged_sensor_{nullptr};
   number::Number *current_offered_number_{nullptr};
+  // Tracks the most recent CSMS-imposed SmartCharging effective limit. -1 = no
+  // limit / cleared. 0 = CSMS-imposed pause (e.g. evcc's `Enable(false)` →
+  // SetChargingProfile{limit:0}). evcc's Enabled() check on the OCPP side
+  // falls through to Current.Offered/Power.Offered when status isn't
+  // Charging/SuspendedEVSE — so when the CSMS profile is 0 we have to report
+  // those measurands as 0 too, otherwise evcc reads "still 32 A offered" and
+  // logs `charger out of sync`.
+  float csms_limit_a_{-1.0f};
+  float csms_limit_w_{-1.0f};
   std::map<std::string, std::string> status_mapping_;
   std::string last_source_status_;
   std::string mapped_status_{"Available"};

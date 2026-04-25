@@ -118,13 +118,20 @@ void OcppCp::register_callbacks_() {
   if (current_offered_number_ != nullptr) {
     auto *n = current_offered_number_;
     addMeterValueInput(
-        [n]() -> float { return std::isnan(n->state) ? 0.0f : n->state; },
+        [this, n]() -> float {
+          // CSMS-imposed pause overrides the user's Number — must report 0 so
+          // evcc's Enabled()-via-Current.Offered fallback agrees with its
+          // own `Enable(false)` call.
+          if (csms_limit_a_ == 0.0f || csms_limit_w_ == 0.0f) return 0.0f;
+          return std::isnan(n->state) ? 0.0f : n->state;
+        },
         "Current.Offered", "A");
     auto volt_it2 = meter_sensors_.find(MeterValueField::VOLTAGE);
     if (volt_it2 != meter_sensors_.end() && volt_it2->second != nullptr) {
       auto *v = volt_it2->second;
       addMeterValueInput(
-          [n, v]() -> float {
+          [this, n, v]() -> float {
+            if (csms_limit_a_ == 0.0f || csms_limit_w_ == 0.0f) return 0.0f;
             float i = std::isnan(n->state) ? 0.0f : n->state;
             float vv = v->has_state() ? v->state : 0.0f;
             return i * vv;
@@ -290,10 +297,14 @@ void OcppCp::register_callbacks_() {
   // current_limit_A == -1.0f means "no limit" (pass through hardware default).
   setSmartChargingCurrentOutput([this](float current_limit_a) {
     ESP_LOGD(TAG, "SmartCharging current limit: %.1f A", current_limit_a);
+    csms_limit_a_ = current_limit_a;
+    csms_limit_w_ = -1.0f;
     for (auto &cb : charging_profile_callbacks_) cb(current_limit_a, -1.0f, -1);
   });
   setSmartChargingPowerOutput([this](float power_limit_w) {
     ESP_LOGD(TAG, "SmartCharging power limit: %.1f W", power_limit_w);
+    csms_limit_w_ = power_limit_w;
+    csms_limit_a_ = -1.0f;
     for (auto &cb : charging_profile_callbacks_) cb(-1.0f, power_limit_w, -1);
   });
 }
@@ -304,6 +315,12 @@ void OcppCp::loop() {
   poll_status_();
   enforce_heartbeat_interval_();
   publish_connection_state_();
+}
+
+void OcppCp::end_transaction(const std::string &reason) {
+  if (!initialized_) return;
+  ESP_LOGI(TAG, "end_transaction (reason=%s)", reason.c_str());
+  ::endTransaction(nullptr, reason.c_str(), 1);
 }
 
 void OcppCp::publish_connection_state_() {
