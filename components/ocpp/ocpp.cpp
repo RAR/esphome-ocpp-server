@@ -39,6 +39,11 @@ void OcppCp::setup() {
                            firmware_version_.empty() ? nullptr : firmware_version_.c_str());
   mocpp_initialize(*mo_conn_, creds, nullptr);
 
+  // OCPP 1.6 optional standard key. evcc and other CSMSes try to set this on
+  // every CP; declaring it makes ChangeConfiguration return Accepted. We don't
+  // honour the value — the WsClient pings at a fixed 20 s cadence regardless.
+  MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20);
+
   register_callbacks_();
   initialized_ = true;
 }
