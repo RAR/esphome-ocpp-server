@@ -30,7 +30,7 @@ Top-level YAML surface:
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
-from esphome.components import sensor, text_sensor, binary_sensor
+from esphome.components import sensor, text_sensor, binary_sensor, number
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
 
 CODEOWNERS = ["@andrewrankin"]
@@ -73,8 +73,18 @@ CONF_ON_UNLOCK_CONNECTOR = "on_unlock_connector"
 CONF_ON_CHARGING_PROFILE_CHANGE = "on_charging_profile_change"
 
 
+CONF_CURRENT_OFFERED = "current_offered"
+
+# `current_offered` accepts a number.Number (e.g. a `Max Charge Current` number
+# entity) — that's the value the EVSE is offering on the J1772 PWM, which
+# evcc / OCPP CSMSes commonly want as `Current.Offered` in MeterValues. Power
+# Offered is auto-computed from current_offered × voltage when both are bound;
+# we don't expose a separate `power_offered` slot.
 METER_VALUES_SCHEMA = cv.Schema(
-    {cv.Optional(key): cv.use_id(sensor.Sensor) for key in _FIELDS}
+    {
+        **{cv.Optional(key): cv.use_id(sensor.Sensor) for key in _FIELDS},
+        cv.Optional(CONF_CURRENT_OFFERED): cv.use_id(number.Number),
+    }
 )
 
 
@@ -148,6 +158,9 @@ async def to_code(config):
             if key in config[CONF_METER_VALUES]:
                 s = await cg.get_variable(config[CONF_METER_VALUES][key])
                 cg.add(var.set_meter_value_sensor(enum_val, s))
+        if CONF_CURRENT_OFFERED in config[CONF_METER_VALUES]:
+            n = await cg.get_variable(config[CONF_METER_VALUES][CONF_CURRENT_OFFERED])
+            cg.add(var.set_current_offered_number(n))
 
     if CONF_STATUS_FROM in config:
         ts = await cg.get_variable(config[CONF_STATUS_FROM])

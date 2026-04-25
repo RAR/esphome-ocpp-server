@@ -4,6 +4,9 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/number/number.h"
+
+#include <cmath>
 
 #include <MicroOcpp.h>
 #include <MicroOcpp/Core/Configuration.h>
@@ -103,6 +106,31 @@ void OcppCp::register_callbacks_() {
     auto *s = curr_it->second;
     addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
                        "Current.Import", "A");
+  }
+
+  // Current.Offered / Power.Offered. evcc requests both when configured with
+  // remotestart + currentLimit so it can reflect the EVSE-offered cap in its
+  // UI. Without registering them, MO emits "could not find metering device"
+  // warnings on every ChangeConfiguration. Bind a number::Number that holds
+  // the offered current (e.g. a Max Charge Current entity) and we publish
+  // both Current.Offered = number.state and (if voltage is bound) the
+  // computed Power.Offered = current_offered × voltage_rms.
+  if (current_offered_number_ != nullptr) {
+    auto *n = current_offered_number_;
+    addMeterValueInput(
+        [n]() -> float { return std::isnan(n->state) ? 0.0f : n->state; },
+        "Current.Offered", "A");
+    auto volt_it2 = meter_sensors_.find(MeterValueField::VOLTAGE);
+    if (volt_it2 != meter_sensors_.end() && volt_it2->second != nullptr) {
+      auto *v = volt_it2->second;
+      addMeterValueInput(
+          [n, v]() -> float {
+            float i = std::isnan(n->state) ? 0.0f : n->state;
+            float vv = v->has_state() ? v->state : 0.0f;
+            return i * vv;
+          },
+          "Power.Offered", "W");
+    }
   }
 
   // Connector inputs — drive MicroOcpp's connector state machine. Without these
