@@ -101,15 +101,16 @@ class OcppCp : public Component {
   std::string last_connection_state_;
   binary_sensor::BinarySensor *plugged_sensor_{nullptr};
   number::Number *current_offered_number_{nullptr};
-  // Tracks the most recent CSMS-imposed SmartCharging effective limit. -1 = no
-  // limit / cleared. 0 = CSMS-imposed pause (e.g. evcc's `Enable(false)` →
-  // SetChargingProfile{limit:0}). evcc's Enabled() check on the OCPP side
-  // falls through to Current.Offered/Power.Offered when status isn't
-  // Charging/SuspendedEVSE — so when the CSMS profile is 0 we have to report
-  // those measurands as 0 too, otherwise evcc reads "still 32 A offered" and
-  // logs `charger out of sync`.
-  float csms_limit_a_{-1.0f};
-  float csms_limit_w_{-1.0f};
+  // True when the CSMS has installed a profile whose first period limit is 0
+  // (i.e. evcc's `Enable(false)` → SetChargingProfile{limit:0}). MicroOcpp's
+  // SmartChargingService interprets `limit:0` as "no constraint" and emits a
+  // -1 sentinel from setSmartChargingPowerOutput, so we can't rely on the
+  // output callback to detect a CSMS-imposed pause. Instead we set this flag
+  // directly from the SetChargingProfile/ClearChargingProfile observers.
+  // When true, Current.Offered / Power.Offered are reported as 0 so evcc's
+  // Enabled()-via-offered-measurand fallback agrees with its own Enable(false)
+  // call (otherwise it logs `charger out of sync`).
+  bool csms_disabled_{false};
   std::map<std::string, std::string> status_mapping_;
   std::string last_source_status_;
   std::string mapped_status_{"Available"};

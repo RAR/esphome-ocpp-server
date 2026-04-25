@@ -119,10 +119,7 @@ void OcppCp::register_callbacks_() {
     auto *n = current_offered_number_;
     addMeterValueInput(
         [this, n]() -> float {
-          // CSMS-imposed pause overrides the user's Number — must report 0 so
-          // evcc's Enabled()-via-Current.Offered fallback agrees with its
-          // own `Enable(false)` call.
-          if (csms_limit_a_ == 0.0f || csms_limit_w_ == 0.0f) return 0.0f;
+          if (csms_disabled_) return 0.0f;
           return std::isnan(n->state) ? 0.0f : n->state;
         },
         "Current.Offered", "A");
@@ -131,7 +128,7 @@ void OcppCp::register_callbacks_() {
       auto *v = volt_it2->second;
       addMeterValueInput(
           [this, n, v]() -> float {
-            if (csms_limit_a_ == 0.0f || csms_limit_w_ == 0.0f) return 0.0f;
+            if (csms_disabled_) return 0.0f;
             float i = std::isnan(n->state) ? 0.0f : n->state;
             float vv = v->has_state() ? v->state : 0.0f;
             return i * vv;
@@ -172,7 +169,7 @@ void OcppCp::register_callbacks_() {
   // SmartCharging engine still computes the effective limit and feeds it to
   // setSmartChargingCurrentOutput / setSmartChargingPowerOutput below — this
   // observer is purely diagnostic.
-  setOnReceiveRequest("SetChargingProfile", [](JsonObject payload) {
+  setOnReceiveRequest("SetChargingProfile", [this](JsonObject payload) {
     int connector_id = payload["connectorId"] | -1;
     JsonObject prof = payload["csChargingProfiles"];
     if (prof.isNull()) {
@@ -193,10 +190,16 @@ void OcppCp::register_callbacks_() {
              duration);
     JsonArray periods = sched["chargingSchedulePeriod"];
     size_t i = 0;
+    bool first_period_zero = false;
+    bool first_period_positive = false;
     for (JsonObject p : periods) {
       int start = p["startPeriod"] | 0;
-      float limit = p["limit"] | 0.0f;
+      float limit = p["limit"] | -1.0f;
       int phases = p["numberPhases"] | -1;
+      if (i == 0 && start == 0) {
+        if (limit == 0.0f) first_period_zero = true;
+        else if (limit > 0.0f) first_period_positive = true;
+      }
       if (phases >= 0) {
         ESP_LOGI(TAG, "  period[%u] start=+%ds limit=%.1f%s phases=%d",
                  (unsigned) i, start, limit, unit, phases);
@@ -206,12 +209,29 @@ void OcppCp::register_callbacks_() {
       }
       i++;
     }
+    // Only TxDefaultProfile / TxProfile actually gate charging. Skip
+    // ChargePointMaxProfile (a global cap, not an enable/disable signal).
+    bool is_tx_profile = strcmp(purpose, "TxDefaultProfile") == 0 ||
+                         strcmp(purpose, "TxProfile") == 0;
+    if (is_tx_profile) {
+      if (first_period_zero) {
+        if (!csms_disabled_) {
+          ESP_LOGI(TAG, "  -> CSMS disable: forcing offered measurands to 0");
+        }
+        csms_disabled_ = true;
+      } else if (first_period_positive) {
+        if (csms_disabled_) {
+          ESP_LOGI(TAG, "  -> CSMS re-enable: offered measurands track Number");
+        }
+        csms_disabled_ = false;
+      }
+    }
   });
 
-  // Same diagnostic pattern for ClearChargingProfile so a "stop charging"
-  // edge from the CSMS is visible whether it comes via RemoteStop or via
-  // profile-level pause.
-  setOnReceiveRequest("ClearChargingProfile", [](JsonObject payload) {
+  // Same diagnostic pattern for ClearChargingProfile, plus a re-enable: when
+  // the CSMS clears a profile we drop any in-effect disable so Current.Offered
+  // tracks the user's Number again.
+  setOnReceiveRequest("ClearChargingProfile", [this](JsonObject payload) {
     int profile_id = payload["id"] | -1;
     int connector_id = payload["connectorId"] | -1;
     const char *purpose = payload["chargingProfilePurpose"] | "?";
@@ -219,6 +239,10 @@ void OcppCp::register_callbacks_() {
     ESP_LOGI(TAG,
              "ClearChargingProfile: id=%d connector=%d purpose=%s stack=%d",
              profile_id, connector_id, purpose, stack_level);
+    if (csms_disabled_) {
+      ESP_LOGI(TAG, "  -> CSMS re-enable (profile cleared)");
+      csms_disabled_ = false;
+    }
   });
 
   // Transaction lifecycle hook. setOnReceiveRequest fires the moment the
@@ -297,14 +321,10 @@ void OcppCp::register_callbacks_() {
   // current_limit_A == -1.0f means "no limit" (pass through hardware default).
   setSmartChargingCurrentOutput([this](float current_limit_a) {
     ESP_LOGD(TAG, "SmartCharging current limit: %.1f A", current_limit_a);
-    csms_limit_a_ = current_limit_a;
-    csms_limit_w_ = -1.0f;
     for (auto &cb : charging_profile_callbacks_) cb(current_limit_a, -1.0f, -1);
   });
   setSmartChargingPowerOutput([this](float power_limit_w) {
     ESP_LOGD(TAG, "SmartCharging power limit: %.1f W", power_limit_w);
-    csms_limit_w_ = power_limit_w;
-    csms_limit_a_ = -1.0f;
     for (auto &cb : charging_profile_callbacks_) cb(-1.0f, power_limit_w, -1);
   });
 }
