@@ -36,5 +36,24 @@ class UnlockConnectorTrigger : public Trigger<int> {
   }
 };
 
+// Fired when MicroOcpp recomputes the connector's effective charging limit —
+// either from a SetChargingProfile from CSMS, the expiry of a profile window,
+// or a ChangeAvailability. The user's automation is expected to push the
+// limit to whatever hardware knob actually controls current (typically a
+// number entity bound to the charger's MAX_CURRENT DP).
+//
+// `current_limit_a` is in Amps; `power_limit_w` in Watts; `n_phases` is the
+// number of phases the limit applies to (1 or 3). Negative values mean "no
+// limit" — pass through whatever the hardware default is.
+class ChargingProfileChangeTrigger : public Trigger<float, float, int> {
+ public:
+  explicit ChargingProfileChangeTrigger(OcppCp *parent) {
+    parent->add_on_charging_profile_change_callback(
+        [this](float current_limit_a, float power_limit_w, int n_phases) {
+          this->trigger(current_limit_a, power_limit_w, n_phases);
+        });
+  }
+};
+
 }  // namespace ocpp
 }  // namespace esphome

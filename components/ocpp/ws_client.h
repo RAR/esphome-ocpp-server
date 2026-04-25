@@ -64,6 +64,8 @@ class WsClient {
   uint32_t state_enter_ms_{0};
   uint32_t last_connected_ms_{0};
   uint32_t last_ping_ms_{0};
+  uint32_t last_pong_ms_{0};
+  uint32_t ping_counter_{0};
 
   std::string handshake_key_;        // base64 of 16 random bytes
   std::string handshake_response_;   // accumulating HTTP response

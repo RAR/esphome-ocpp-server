@@ -43,6 +43,10 @@ RemoteStartTrigger = ocpp_ns.class_("RemoteStartTrigger", automation.Trigger.tem
 RemoteStopTrigger = ocpp_ns.class_("RemoteStopTrigger", automation.Trigger.template(cg.int_))
 ResetTrigger = ocpp_ns.class_("ResetTrigger", automation.Trigger.template(cg.std_string))
 UnlockConnectorTrigger = ocpp_ns.class_("UnlockConnectorTrigger", automation.Trigger.template(cg.int_))
+ChargingProfileChangeTrigger = ocpp_ns.class_(
+    "ChargingProfileChangeTrigger",
+    automation.Trigger.template(cg.float_, cg.float_, cg.int_),
+)
 
 MeterValueField = ocpp_ns.enum("MeterValueField", is_class=True)
 _FIELDS = {
@@ -60,10 +64,12 @@ CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_METER_VALUES = "meter_values"
 CONF_STATUS_FROM = "status_from"
 CONF_STATUS_MAPPING = "status_mapping"
+CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
 CONF_ON_REMOTE_START = "on_remote_start"
 CONF_ON_REMOTE_STOP = "on_remote_stop"
 CONF_ON_RESET = "on_reset"
 CONF_ON_UNLOCK_CONNECTOR = "on_unlock_connector"
+CONF_ON_CHARGING_PROFILE_CHANGE = "on_charging_profile_change"
 
 
 METER_VALUES_SCHEMA = cv.Schema(
@@ -84,6 +90,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_STATUS_MAPPING, default={}): cv.Schema(
             {cv.string: cv.string_strict}
         ),
+        cv.Optional(CONF_HEARTBEAT_INTERVAL): cv.positive_time_period_seconds,
         cv.Optional(CONF_ON_REMOTE_START): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteStartTrigger)}
         ),
@@ -95,6 +102,9 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_ON_UNLOCK_CONNECTOR): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(UnlockConnectorTrigger)}
+        ),
+        cv.Optional(CONF_ON_CHARGING_PROFILE_CHANGE): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ChargingProfileChangeTrigger)}
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -144,6 +154,9 @@ async def to_code(config):
     for k, v in config[CONF_STATUS_MAPPING].items():
         cg.add(var.add_status_mapping(k, v))
 
+    if CONF_HEARTBEAT_INTERVAL in config:
+        cg.add(var.set_heartbeat_interval(int(config[CONF_HEARTBEAT_INTERVAL].total_seconds)))
+
     for conf in config.get(CONF_ON_REMOTE_START, []):
         trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [(cg.std_string, "id_tag")], conf)
@@ -156,3 +169,14 @@ async def to_code(config):
     for conf in config.get(CONF_ON_UNLOCK_CONNECTOR, []):
         trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [(cg.int_, "connector_id")], conf)
+    for conf in config.get(CONF_ON_CHARGING_PROFILE_CHANGE, []):
+        trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig,
+            [
+                (cg.float_, "current_limit_a"),
+                (cg.float_, "power_limit_w"),
+                (cg.int_, "n_phases"),
+            ],
+            conf,
+        )

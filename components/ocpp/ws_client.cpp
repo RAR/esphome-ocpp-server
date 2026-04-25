@@ -153,6 +153,11 @@ bool WsClient::read_http_response_() {
       state_ = STATE_OPEN;
       state_enter_ms_ = millis();
       last_connected_ms_ = millis();
+      // Seed pong timer to "just received one" so the 60 s pong-watchdog
+      // doesn't fire spuriously before the first ping/pong cycle completes.
+      last_pong_ms_ = millis();
+      last_ping_ms_ = millis();
+      ping_counter_ = 0;
       return true;
     }
     if (handshake_response_.size() > 4096) {
@@ -268,12 +273,17 @@ void WsClient::read_frames_() {
       if (on_text_) on_text_(reinterpret_cast<const char *>(frame_buf_.data()), frame_buf_.size());
       break;
     case 0x8:  // close
+      ESP_LOGI(TAG, "Server sent Close (len=%u)", (unsigned) frame_buf_.size());
       close_(1000, "peer-close");
       break;
     case 0x9:  // ping -> pong
-      send_frame_(0xA, frame_buf_.data(), frame_buf_.size());
+      ESP_LOGD(TAG, "Server ping (%u bytes), sending pong", (unsigned) frame_buf_.size());
+      if (!send_frame_(0xA, frame_buf_.data(), frame_buf_.size()))
+        ESP_LOGW(TAG, "Pong send failed");
       break;
     case 0xA:  // pong
+      ESP_LOGD(TAG, "Server pong received");
+      last_pong_ms_ = millis();
       break;
     default:
       ESP_LOGW(TAG, "Unsupported opcode 0x%X", opcode);
@@ -309,9 +319,12 @@ void WsClient::loop() {
 
   switch (state_) {
     case STATE_DISCONNECTED: {
-      // Reconnect every 30 s when idle. (Backoff is simple; the CSMS almost
-      // certainly goes down less often than our retry cadence matters.)
-      if (!url_.empty() && now - state_enter_ms_ > 30000) {
+      // Reconnect after 5 s when idle. SteVe's session ends fast on transient
+      // drops (TCP RST or 1006), and a 30 s gap leaves stations offline far
+      // longer than necessary on a flaky LAN.
+      if (!url_.empty() && now - state_enter_ms_ > 5000) {
+        ESP_LOGI(TAG, "Reconnecting (idle %u ms)",
+                 (unsigned)(now - state_enter_ms_));
         begin();
       }
       break;
@@ -330,14 +343,40 @@ void WsClient::loop() {
       break;
     case STATE_OPEN:
       if (!client_.connected()) {
-        ESP_LOGW(TAG, "TCP dropped while open");
+        ESP_LOGW(TAG, "TCP dropped while open (uptime %u ms)",
+                 (unsigned)(now - last_connected_ms_));
         reset_();
         break;
       }
       read_frames_();
-      if (now - last_ping_ms_ > 30000) {
+      // 20 s ping cadence beats any practical Jetty / proxy / NAT idle timeout
+      // (most are 30 s / 60 s / 120 s). RFC 6455 §5.5.2 — ping payload is
+      // optional but some servers ignore zero-length pings; send a 4-byte
+      // monotonic counter so each frame is unique on the wire and visible in
+      // packet captures.
+      if (now - last_ping_ms_ > 20000) {
         last_ping_ms_ = now;
-        send_frame_(0x9, nullptr, 0);
+        ping_counter_++;
+        uint8_t payload[4] = {
+            static_cast<uint8_t>((ping_counter_ >> 24) & 0xFF),
+            static_cast<uint8_t>((ping_counter_ >> 16) & 0xFF),
+            static_cast<uint8_t>((ping_counter_ >> 8) & 0xFF),
+            static_cast<uint8_t>(ping_counter_ & 0xFF)};
+        bool ok = send_frame_(0x9, payload, sizeof(payload));
+        ESP_LOGD(TAG, "Sent ping #%u (%s)", (unsigned) ping_counter_,
+                 ok ? "ok" : "FAIL");
+        if (!ok) {
+          ESP_LOGW(TAG, "Ping send failed; tearing down");
+          reset_();
+          break;
+        }
+        // If we haven't seen a pong in 60 s, the link is dead — peer may have
+        // half-closed without TCP RST. Trigger an explicit reconnect.
+        if (last_pong_ms_ != 0 && now - last_pong_ms_ > 60000) {
+          ESP_LOGW(TAG, "No pong in %u ms; reconnecting",
+                   (unsigned)(now - last_pong_ms_));
+          reset_();
+        }
       }
       break;
     case STATE_CLOSING:

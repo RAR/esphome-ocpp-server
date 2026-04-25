@@ -41,6 +41,7 @@ class OcppCp : public Component {
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
   void add_status_mapping(const std::string &from, const std::string &to) { status_mapping_[from] = to; }
+  void set_heartbeat_interval(int seconds) { heartbeat_interval_s_ = seconds; }
 
   void add_on_remote_start_callback(std::function<void(const std::string &)> cb) {
     remote_start_callbacks_.push_back(std::move(cb));
@@ -54,11 +55,24 @@ class OcppCp : public Component {
   void add_on_unlock_callback(std::function<void(int)> cb) {
     unlock_callbacks_.push_back(std::move(cb));
   }
+  void add_on_charging_profile_change_callback(
+      std::function<void(float, float, int)> cb) {
+    charging_profile_callbacks_.push_back(std::move(cb));
+  }
 
  protected:
   void init_microocpp_();
   void register_callbacks_();
   void poll_status_();
+
+  // Connector input derivation: MicroOcpp's state machine wants three booleans
+  // (plugged, EV-ready, EVSE-ready). We compute them from the cached, already-
+  // mapped OCPP status string so a single status_mapping is enough to drive the
+  // entire StatusNotification + Start/StopTransaction lifecycle.
+  bool is_plugged_() const;
+  bool is_ev_ready_() const;
+  bool is_evse_ready_() const;
+  void enforce_heartbeat_interval_();
 
   std::string csms_url_;
   std::string cp_id_;
@@ -69,12 +83,16 @@ class OcppCp : public Component {
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   text_sensor::TextSensor *status_sensor_{nullptr};
   std::map<std::string, std::string> status_mapping_;
-  std::string last_status_;
+  std::string last_source_status_;
+  std::string mapped_status_{"Available"};
+  int heartbeat_interval_s_{0};  // 0 = let CSMS decide
+  uint32_t last_hb_check_ms_{0};
 
   std::vector<std::function<void(const std::string &)>> remote_start_callbacks_;
   std::vector<std::function<void(int)>> remote_stop_callbacks_;
   std::vector<std::function<void(const std::string &)>> reset_callbacks_;
   std::vector<std::function<void(int)>> unlock_callbacks_;
+  std::vector<std::function<void(float, float, int)>> charging_profile_callbacks_;
 
   WsClient *ws_{nullptr};
   MoConnection *mo_conn_{nullptr};
