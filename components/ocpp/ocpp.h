@@ -44,6 +44,7 @@ class OcppCp : public Component {
   void add_status_mapping(const std::string &from, const std::string &to) { status_mapping_[from] = to; }
   void set_plugged_binary_sensor(binary_sensor::BinarySensor *s) { plugged_sensor_ = s; }
   void set_heartbeat_interval(int seconds) { heartbeat_interval_s_ = seconds; }
+  void set_connection_state_text_sensor(text_sensor::TextSensor *s) { connection_state_sensor_ = s; }
 
   void add_on_remote_start_callback(std::function<void(const std::string &)> cb) {
     remote_start_callbacks_.push_back(std::move(cb));
@@ -75,6 +76,7 @@ class OcppCp : public Component {
   bool is_ev_ready_() const;
   bool is_evse_ready_() const;
   void enforce_heartbeat_interval_();
+  void publish_connection_state_();
 
   std::string csms_url_;
   std::string cp_id_;
@@ -84,6 +86,8 @@ class OcppCp : public Component {
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   text_sensor::TextSensor *status_sensor_{nullptr};
+  text_sensor::TextSensor *connection_state_sensor_{nullptr};
+  std::string last_connection_state_;
   binary_sensor::BinarySensor *plugged_sensor_{nullptr};
   std::map<std::string, std::string> status_mapping_;
   std::string last_source_status_;

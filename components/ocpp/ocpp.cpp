@@ -50,6 +50,21 @@ void OcppCp::setup() {
   MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20,
                                        CONFIGURATION_VOLATILE);
 
+  // MO's MeteringService default for MeterValuesSampledData is just
+  // "Energy.Active.Import.Register,Power.Active.Import" — voltage and current
+  // are dropped from MeterValues even though we feed them in through
+  // addMeterValueInput(). Force the full set so evcc / other CSMSes see V/I/P/E
+  // per sample without having to ChangeConfiguration on every connect.
+  // declareConfiguration is idempotent (returns the existing slot if MO has
+  // already declared it earlier in init), so we setString() to actually move
+  // the runtime value off MO's stingier default.
+  if (auto mvsd = MicroOcpp::declareConfiguration<const char *>(
+          "MeterValuesSampledData",
+          "Energy.Active.Import.Register,Power.Active.Import,Voltage,Current.Import")) {
+    mvsd->setString(
+        "Energy.Active.Import.Register,Power.Active.Import,Voltage,Current.Import");
+  }
+
   register_callbacks_();
   initialized_ = true;
 }
@@ -260,6 +275,39 @@ void OcppCp::loop() {
   mocpp_loop();
   poll_status_();
   enforce_heartbeat_interval_();
+  publish_connection_state_();
+}
+
+void OcppCp::publish_connection_state_() {
+  if (connection_state_sensor_ == nullptr || ws_ == nullptr) return;
+  const char *s;
+  switch (ws_->state()) {
+    case WsClient::STATE_DISCONNECTED:
+      s = "disconnected";
+      break;
+    case WsClient::STATE_CONNECTING:
+      s = "connecting";
+      break;
+    case WsClient::STATE_HANDSHAKING:
+      s = "handshaking";
+      break;
+    case WsClient::STATE_OPEN:
+      // "ready" implies BootNotification accepted *and* the connector isn't
+      // Faulted/Unavailable. MicroOcpp::isOperative(1) covers both —
+      // chargePoint->isOperative() flips true on RegistrationStatus::Accepted.
+      s = MicroOcpp::isOperative(1) ? "ready" : "connected";
+      break;
+    case WsClient::STATE_CLOSING:
+      s = "closing";
+      break;
+    default:
+      s = "unknown";
+      break;
+  }
+  if (last_connection_state_ != s) {
+    last_connection_state_ = s;
+    connection_state_sensor_->publish_state(s);
+  }
 }
 
 void OcppCp::enforce_heartbeat_interval_() {
