@@ -131,8 +131,19 @@ void OcppCp::register_callbacks_() {
     auto it = meter_sensors_.find(f);
     if (it == meter_sensors_.end() || it->second == nullptr) return;
     auto *s = it->second;
-    addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
-                       measurand, unit, location);
+    // Sanitize NaN to 0. Go's encoding/json can't marshal NaN floats; if
+    // evcc's Battery / Phase-getter decorators are active because the
+    // charger advertised the measurand at cp_setup time, dev.Soc() (etc.)
+    // returning NaN crashes the JSON marshal of evcc's
+    // /api/config/devices/charger/<id>/status — the response is 200 with an
+    // empty body and the Configuration UI shows blank. Combined with the
+    // dynamic-MVSD logic that excludes the measurand entirely when stale,
+    // emitting 0 instead of NaN means evcc's last-known cached value stays
+    // a real number.
+    addMeterValueInput([s]() -> float {
+      if (!s->has_state() || std::isnan(s->state)) return 0.0f;
+      return s->state;
+    }, measurand, unit, location);
   };
   // Temperature → charger body. Switch the location string at the call site
   // if you bind a different sensor (e.g. gun_temp would warrant Location=Cable).
