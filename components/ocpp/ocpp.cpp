@@ -183,6 +183,11 @@ void OcppCp::register_callbacks_() {
     addMeterValueInput(
         [this, n]() -> float {
           if (csms_disabled_) return 0.0f;
+          // Hardware-locked-during-transaction: report the snapshot taken
+          // at StartTx, not the live Number state. The Number can still
+          // move (HA UI / evcc reflect intent), but the wire value evcc
+          // verifies against tracks what the EVSE is actually doing.
+          if (offered_current_locked_) return locked_offered_value_;
           return std::isnan(n->state) ? 0.0f : n->state;
         },
         "Current.Offered", "A");
@@ -402,10 +407,29 @@ void OcppCp::register_callbacks_() {
       case N::StartTx:
         ESP_LOGI(TAG, "StartTransaction triggered: idTag='%s' tx=%d", id_tag,
                  tx_id);
+        // Snapshot the current_offered Number state for hardware-locked
+        // EVSEs. Subsequent SetChargingProfile messages will still call
+        // the user's on_charging_profile_change lambda (which usually
+        // updates the Number for HA UI), but Current.Offered on the wire
+        // stays at this snapshot until StopTx — so evcc's measured-vs-
+        // offered comparison sees the actual hardware setpoint.
+        if (lock_offered_current_during_transaction_ &&
+            current_offered_number_ != nullptr) {
+          float v = current_offered_number_->state;
+          locked_offered_value_ = std::isnan(v) ? 0.0f : v;
+          offered_current_locked_ = true;
+          ESP_LOGI(TAG, "  -> Current.Offered locked at %.1f A for duration of "
+                         "transaction (hardware can't change mid-session)",
+                   locked_offered_value_);
+        }
         for (auto &cb : remote_start_callbacks_) cb(std::string(id_tag));
         break;
       case N::StopTx:
         ESP_LOGI(TAG, "StopTransaction triggered: tx=%d", tx_id);
+        if (offered_current_locked_) {
+          ESP_LOGI(TAG, "  -> Current.Offered lock released");
+          offered_current_locked_ = false;
+        }
         for (auto &cb : remote_stop_callbacks_) cb(tx_id);
         break;
       case N::ConnectionTimeout:

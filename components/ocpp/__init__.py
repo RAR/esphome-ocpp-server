@@ -72,6 +72,7 @@ CONF_L2 = "l2"
 CONF_L3 = "l3"
 CONF_NOMINAL_VOLTAGE = "nominal_voltage"
 CONF_PHASE_SWITCHING_SUPPORTED = "phase_switching_supported"
+CONF_LOCK_OFFERED_CURRENT_DURING_TRANSACTION = "lock_offered_current_during_transaction"
 CONF_METER_VALUES = "meter_values"
 CONF_STATUS_FROM = "status_from"
 CONF_STATUS_MAPPING = "status_mapping"
@@ -175,6 +176,23 @@ CONFIG_SCHEMA = cv.Schema(
         # the OCPP ConnectorSwitch3to1PhaseSupported declaration that evcc
         # reads to override its "Phase switch: yes" UI heuristic.
         cv.Optional(CONF_PHASE_SWITCHING_SUPPORTED, default=False): cv.boolean,
+        # Set true on EVSEs whose hardware can't change the offered current
+        # mid-transaction (e.g. Rippleon ROC001 — writing the 0x1002 register
+        # mid-session faults the MCU). When the connector is in an active
+        # OCPP transaction we snapshot Current.Offered to whatever
+        # current_offered (the bound Number) had at StartTx and lock the
+        # MeterValues sample to that value until StopTx; the user-bound
+        # Number can still change (HA UI / evcc reflect intent) but evcc's
+        # measured-vs-offered comparison sees the immutable hardware truth
+        # instead of a setpoint the EVSE silently ignored. Without this,
+        # evcc logs `current mismatch` because the post-SetChargingProfile
+        # readback shows the new setpoint but the actual current draw still
+        # reflects the session-start cap. Default false: most EVSEs can
+        # honour mid-session current changes and want Current.Offered to
+        # track intent.
+        cv.Optional(
+            CONF_LOCK_OFFERED_CURRENT_DURING_TRANSACTION, default=False
+        ): cv.boolean,
         cv.Optional(CONF_METER_VALUES): METER_VALUES_SCHEMA,
         cv.Optional(CONF_STATUS_FROM): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_STATUS_MAPPING, default={}): cv.Schema(
@@ -241,6 +259,11 @@ async def to_code(config):
 
     cg.add(var.set_nominal_voltage(config[CONF_NOMINAL_VOLTAGE]))
     cg.add(var.set_phase_switching_supported(config[CONF_PHASE_SWITCHING_SUPPORTED]))
+    cg.add(
+        var.set_lock_offered_current_during_transaction(
+            config[CONF_LOCK_OFFERED_CURRENT_DURING_TRANSACTION]
+        )
+    )
 
     if CONF_METER_VALUES in config:
         mv = config[CONF_METER_VALUES]

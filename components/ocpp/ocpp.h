@@ -62,6 +62,14 @@ class OcppCp : public Component {
   // "Phase switch: yes" UI heuristic. Single-phase EVSEs (most US) leave
   // this false; EU 3-phase switchable EVSEs set true.
   void set_phase_switching_supported(bool b) { phase_switching_supported_ = b; }
+  // True for EVSEs whose hardware can't reprogram the offered current
+  // mid-transaction. While a transaction is active, Current.Offered is
+  // pinned to the snapshot taken at StartTx (instead of tracking the
+  // user-bound Number). evcc reads the snapshot and stops logging
+  // "current mismatch" when it tries — and fails — to derate mid-session.
+  void set_lock_offered_current_during_transaction(bool b) {
+    lock_offered_current_during_transaction_ = b;
+  }
 
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
   // 3-phase mode: per-leg sensors keyed by (measurand, leg-index 0..2).
@@ -146,6 +154,14 @@ class OcppCp : public Component {
   std::string phase_;
   float nominal_voltage_{230.0f};
   bool phase_switching_supported_{false};
+  // Offered-current lock state. lock_offered_current_during_transaction_
+  // is the static config switch; offered_current_locked_ is true between
+  // a StartTx and a StopTx while the switch is on; locked_offered_value_
+  // captures Number->state at StartTx and is what Current.Offered reports
+  // until the lock releases.
+  bool lock_offered_current_during_transaction_{false};
+  bool offered_current_locked_{false};
+  float locked_offered_value_{0.0f};
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   // Per-phase voltage/current sensors. Outer key is the measurand
