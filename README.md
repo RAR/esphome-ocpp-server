@@ -56,6 +56,12 @@ ocpp:
   phase: L1                          # OCPP phase tag for V/I (single-phase: L1)
   nominal_voltage: 240.0             # 120 US outlet / 230 EU 1ϕ / 240 US split / 400 EU 3ϕ L-L
   phase_switching_supported: false   # true only for EU 3-phase 1p3p switchable EVSEs
+  lock_offered_current_during_transaction: false
+                                     # true on EVSEs whose hardware can't change
+                                     # offered current mid-session — pins the
+                                     # Current.Offered measurand to its StartTx
+                                     # value so evcc stops logging "current
+                                     # mismatch" on attempted mid-session derates
   # 3-phase EVSEs swap the `phase:` scalar above for a `phases:` list and
   # use {l1,l2,l3} dicts under voltage / current in meter_values:
   #   phases: [L1, L2, L3]
