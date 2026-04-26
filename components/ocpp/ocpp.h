@@ -131,7 +131,6 @@ class OcppCp : public Component {
   std::string mapped_status_{"Available"};
   int heartbeat_interval_s_{0};  // 0 = let CSMS decide
   uint32_t last_hb_check_ms_{0};
-  std::string last_mvsd_;  // last applied MeterValuesSampledData string
   uint32_t last_mvsd_check_ms_{0};
 
   std::vector<std::function<void(const std::string &)>> remote_start_callbacks_;

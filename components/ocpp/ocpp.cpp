@@ -408,14 +408,18 @@ void OcppCp::refresh_mvsd_() {
   uint32_t now = millis();
   if (last_mvsd_check_ms_ != 0 && now - last_mvsd_check_ms_ < 5000) return;
   last_mvsd_check_ms_ = now;
+  auto mvsd = MicroOcpp::declareConfiguration<const char *>(
+      "MeterValuesSampledData", "");
+  if (!mvsd) return;
   std::string desired = build_mvsd_list_();
-  if (desired == last_mvsd_) return;
-  if (auto mvsd = MicroOcpp::declareConfiguration<const char *>(
-          "MeterValuesSampledData", desired.c_str())) {
-    mvsd->setString(desired.c_str());
-    ESP_LOGI(TAG, "MeterValuesSampledData: %s", desired.c_str());
-  }
-  last_mvsd_ = desired;
+  // Compare to MO's actual stored value, not our last write — evcc / SteVe
+  // can ChangeConfiguration MVSD between our refreshes (e.g. inject SoC),
+  // and we need to overwrite that, not skip because our private last_mvsd_
+  // shadow says we already set it to the same string.
+  const char *cur = mvsd->getString();
+  if (cur != nullptr && desired == cur) return;
+  mvsd->setString(desired.c_str());
+  ESP_LOGI(TAG, "MeterValuesSampledData: %s", desired.c_str());
 }
 
 void OcppCp::end_transaction(const std::string &reason) {
