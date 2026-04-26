@@ -96,6 +96,13 @@ class OcppCp : public Component {
   bool is_evse_ready_() const;
   void enforce_heartbeat_interval_();
   void publish_connection_state_();
+  // Builds the comma-separated MeterValuesSampledData string from the bound
+  // sensors. HA-mirrored extras (Temperature, SoC, Frequency, Power.Factor)
+  // are only included when their sensor currently has_state() — that lets us
+  // drop SoC from the wire frame entirely while a vehicle integration is
+  // unavailable, instead of reporting 0 or some sentinel.
+  std::string build_mvsd_list_() const;
+  void refresh_mvsd_();
 
   std::string csms_url_;
   std::string cp_id_;
@@ -124,6 +131,8 @@ class OcppCp : public Component {
   std::string mapped_status_{"Available"};
   int heartbeat_interval_s_{0};  // 0 = let CSMS decide
   uint32_t last_hb_check_ms_{0};
+  std::string last_mvsd_;  // last applied MeterValuesSampledData string
+  uint32_t last_mvsd_check_ms_{0};
 
   std::vector<std::function<void(const std::string &)>> remote_start_callbacks_;
   std::vector<std::function<void(int)>> remote_stop_callbacks_;

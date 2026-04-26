@@ -56,29 +56,10 @@ void OcppCp::setup() {
   // MO's MeteringService default for MeterValuesSampledData is just
   // "Energy.Active.Import.Register,Power.Active.Import" — voltage and current
   // are dropped from MeterValues even though we feed them in through
-  // addMeterValueInput(). Build the list dynamically so we only advertise
-  // measurands that actually have an input bound (otherwise MO logs
-  // "could not find metering device" warnings on every ChangeConfiguration).
-  std::string mvsd_list = "Energy.Active.Import.Register,Power.Active.Import";
-  if (meter_sensors_.count(MeterValueField::VOLTAGE))
-    mvsd_list += ",Voltage";
-  if (meter_sensors_.count(MeterValueField::CURRENT))
-    mvsd_list += ",Current.Import";
-  if (current_offered_number_ != nullptr) mvsd_list += ",Current.Offered";
-  if (current_offered_number_ != nullptr &&
-      meter_sensors_.count(MeterValueField::VOLTAGE))
-    mvsd_list += ",Power.Offered";
-  if (meter_sensors_.count(MeterValueField::TEMPERATURE))
-    mvsd_list += ",Temperature";
-  if (meter_sensors_.count(MeterValueField::SOC)) mvsd_list += ",SoC";
-  if (meter_sensors_.count(MeterValueField::FREQUENCY))
-    mvsd_list += ",Frequency";
-  if (meter_sensors_.count(MeterValueField::POWER_FACTOR))
-    mvsd_list += ",Power.Factor";
-  if (auto mvsd = MicroOcpp::declareConfiguration<const char *>(
-          "MeterValuesSampledData", mvsd_list.c_str())) {
-    mvsd->setString(mvsd_list.c_str());
-  }
+  // addMeterValueInput(). build_mvsd_list_ assembles the full advertised set,
+  // and refresh_mvsd_ keeps it in sync at runtime as transient sensors (HA
+  // mirrors of vehicle SoC, grid frequency, etc.) come and go.
+  refresh_mvsd_();
 
   register_callbacks_();
   initialized_ = true;
@@ -381,6 +362,58 @@ void OcppCp::loop() {
   poll_status_();
   enforce_heartbeat_interval_();
   publish_connection_state_();
+  refresh_mvsd_();
+}
+
+std::string OcppCp::build_mvsd_list_() const {
+  std::string list = "Energy.Active.Import.Register,Power.Active.Import";
+  auto add_if = [&](bool cond, const char *m) {
+    if (cond) {
+      list += ",";
+      list += m;
+    }
+  };
+  // Always-on local sensors — present whenever bound.
+  add_if(meter_sensors_.count(MeterValueField::VOLTAGE) > 0, "Voltage");
+  add_if(meter_sensors_.count(MeterValueField::CURRENT) > 0, "Current.Import");
+  // Current/Power.Offered come from the user-bound Number. Drop them while
+  // CSMS has imposed a 0-limit profile (see csms_disabled_) — otherwise
+  // they'd swing between 0 and the Number value depending on the CSMS state,
+  // which is exactly the lookup evcc's Enabled() does.
+  add_if(current_offered_number_ != nullptr, "Current.Offered");
+  add_if(current_offered_number_ != nullptr &&
+             meter_sensors_.count(MeterValueField::VOLTAGE) > 0,
+         "Power.Offered");
+  // HA-mirrored extras: include only when has_state() — drops SoC from the
+  // wire frame while the vehicle integration is unavailable, instead of
+  // reporting a misleading 0%.
+  auto bound_and_ready = [&](MeterValueField f) {
+    auto it = meter_sensors_.find(f);
+    return it != meter_sensors_.end() && it->second != nullptr &&
+           it->second->has_state();
+  };
+  add_if(bound_and_ready(MeterValueField::TEMPERATURE), "Temperature");
+  add_if(bound_and_ready(MeterValueField::SOC), "SoC");
+  add_if(bound_and_ready(MeterValueField::FREQUENCY), "Frequency");
+  add_if(bound_and_ready(MeterValueField::POWER_FACTOR), "Power.Factor");
+  return list;
+}
+
+void OcppCp::refresh_mvsd_() {
+  // Debounce: only check every 5 s. has_state() flips are rare and a stale
+  // measurand for a few seconds during a vehicle-disconnect transition is
+  // harmless.
+  uint32_t now = millis();
+  if (last_mvsd_check_ms_ != 0 && now - last_mvsd_check_ms_ < 5000) return;
+  last_mvsd_check_ms_ = now;
+  std::string desired = build_mvsd_list_();
+  if (desired == last_mvsd_) return;
+  if (auto mvsd = MicroOcpp::declareConfiguration<const char *>(
+          "MeterValuesSampledData", desired.c_str())) {
+    mvsd->setString(desired.c_str());
+    ESP_LOGI(TAG, "MeterValuesSampledData: %s", desired.c_str());
+  }
+  last_mvsd_ = desired;
 }
 
 void OcppCp::end_transaction(const std::string &reason) {
