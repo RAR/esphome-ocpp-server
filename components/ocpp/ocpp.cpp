@@ -546,16 +546,14 @@ void OcppCp::loop() {
 
 std::string OcppCp::build_mvsd_list_() const {
   // MicroOcpp's Configuration::setString rejects strings longer than
-  // MO_CONFIG_MAX_VALSTRSIZE (128 chars including null terminator) and
-  // silently returns false. The full set of measurands we'd like to
-  // advertise (6 mandatory + Temperature + SoC + Frequency + Power.Factor
-  // = 138 chars) overflows that, so a too-long write leaves the slot at
-  // whatever the CSMS last set — which is why this manifested as evcc's
-  // 107-char list permanently overriding ours despite our refresh "succeeding".
-  // Pack in priority order and skip any entry that would push us over 127
-  // chars. Lower-priority extras (Power.Factor → Frequency → Temperature)
-  // get dropped first; the 6 mandatory measurands always fit.
-  static constexpr size_t kMaxLen = 127;
+  // MO_CONFIG_MAX_VALSTRSIZE (default 128 chars including null terminator)
+  // and silently returns false. Our fork raises the override-via-D ceiling;
+  // we set it to 256 in __init__.py so the full 138-char advertised list
+  // fits with margin. Keep the length-pack as a defence-in-depth: if a
+  // future build disables the override, MO would silently reject the
+  // longer string and the CSMS-side default would override ours. 255 chars
+  // matches the configured ceiling minus the null terminator.
+  static constexpr size_t kMaxLen = 255;
   std::string list;
   auto add_if = [&](bool cond, const char *m) {
     if (!cond) return;

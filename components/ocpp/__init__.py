@@ -255,7 +255,22 @@ async def to_code(config):
     # PIO treats `name=url` as an alias; some PIO versions mis-parse the `=`
     # (git sees it as a protocol). Pass the VCS URL as the library name and
     # skip the alias form.
-    cg.add_library("https://github.com/matth-x/MicroOcpp.git#v1.2.0", None)
+    # Use our fork of MicroOcpp v1.2.0 with MO_CONFIG_MAX_VALSTRSIZE made
+    # override-able via -D (commit 5ac8e0e). Upstream hardcodes the
+    # 128-byte ceiling, which silently rejects MeterValuesSampledData
+    # writes longer than 127 chars — exactly what we hit once Temperature,
+    # SoC, Frequency, and Power.Factor are all bound. Pin the SHA rather
+    # than the branch so future force-pushes to the fork can't break us.
+    # PR upstream: TODO open against matth-x/MicroOcpp.
+    cg.add_library(
+        "https://github.com/RAR/MicroOcpp.git#5ac8e0e1f234537d3446e689737057c24a8e8dbb",
+        None,
+    )
+    # Raise the ceiling so the full 6-mandatory + 4-optional measurand
+    # advertised list (138 chars at peak) survives setString. 256 bumps
+    # static RAM cost by 128 B per Configuration<const char*> instance —
+    # immaterial relative to the 50 KB total budget on BK7231N.
+    cg.add_build_flag("-DMO_CONFIG_MAX_VALSTRSIZE=256")
     # MicroOcpp's library.json declares links2004/WebSockets as a transitive
     # dep even when MO_CUSTOM_WS is defined. That lib's WebSockets.h drags
     # in <Ethernet.h> which LibreTiny's Arduino core doesn't ship. Ignore it.
