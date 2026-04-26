@@ -5,6 +5,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/number/number.h"
+#include "esphome/components/api/api_server.h"
 
 #include <cmath>
 
@@ -384,20 +385,44 @@ std::string OcppCp::build_mvsd_list_() const {
   add_if(current_offered_number_ != nullptr &&
              meter_sensors_.count(MeterValueField::VOLTAGE) > 0,
          "Power.Offered");
-  // HA-mirrored extras: include only when has_state() AND the value isn't
-  // NaN. ESPHome's homeassistant: platform marks `unavailable` HA entities
-  // with state=NaN but leaves has_state()=true, so without the isnan guard
-  // we'd advertise SoC and ship `"value":"nan"` rows in MeterValues.
-  auto bound_and_ready = [&](MeterValueField f) {
+  // HA-mirrored extras: include only when the source is actually serving
+  // fresh data. Three conditions stack:
+  //   - has_state() AND !isnan: the homeassistant: platform marks
+  //     `unavailable` HA entities with state=NaN but leaves
+  //     has_state()=true, so the isnan guard drops e.g. SoC while the
+  //     vehicle integration upstream is offline.
+  //   - api_ok (when require_api): if the ESPHome→HA WebSocket itself is
+  //     down, every HA-mirrored sensor is stale; drop them all from MVSD
+  //     until the API reconnects. Local sensors (rippleon's own
+  //     system_temp) ignore this gate.
+  //   - require_plugged: SoC is only meaningful with an EV connected;
+  //     don't report a phantom Rivian SoC while the cable is unplugged
+  //     from the charger.
+  bool api_ok = api::global_api_server != nullptr &&
+                api::global_api_server->is_connected();
+  bool plugged = plugged_sensor_ != nullptr && plugged_sensor_->has_state() &&
+                 plugged_sensor_->state;
+  auto bound_and_ready = [&](MeterValueField f, bool require_api,
+                             bool require_plugged) {
     auto it = meter_sensors_.find(f);
     if (it == meter_sensors_.end() || it->second == nullptr) return false;
     auto *s = it->second;
-    return s->has_state() && !std::isnan(s->state);
+    if (!s->has_state() || std::isnan(s->state)) return false;
+    if (require_api && !api_ok) return false;
+    if (require_plugged && !plugged) return false;
+    return true;
   };
-  add_if(bound_and_ready(MeterValueField::TEMPERATURE), "Temperature");
-  add_if(bound_and_ready(MeterValueField::SOC), "SoC");
-  add_if(bound_and_ready(MeterValueField::FREQUENCY), "Frequency");
-  add_if(bound_and_ready(MeterValueField::POWER_FACTOR), "Power.Factor");
+  // Temperature defaults to a local sensor (rippleon's own system_temp);
+  // not gated on the HA API. SoC/Frequency/Power.Factor are conventionally
+  // HA mirrors — if the user binds a local sensor instead the gate's a
+  // false negative but only while HA is offline, which is acceptable.
+  add_if(bound_and_ready(MeterValueField::TEMPERATURE, false, false),
+         "Temperature");
+  add_if(bound_and_ready(MeterValueField::SOC, true, true), "SoC");
+  add_if(bound_and_ready(MeterValueField::FREQUENCY, true, false),
+         "Frequency");
+  add_if(bound_and_ready(MeterValueField::POWER_FACTOR, true, false),
+         "Power.Factor");
   return list;
 }
 
