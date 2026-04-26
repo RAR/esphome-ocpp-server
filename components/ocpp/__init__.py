@@ -66,6 +66,8 @@ CONF_VENDOR = "vendor"
 CONF_MODEL = "model"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_PHASE = "phase"
+CONF_NOMINAL_VOLTAGE = "nominal_voltage"
+CONF_PHASE_SWITCHING_SUPPORTED = "phase_switching_supported"
 CONF_METER_VALUES = "meter_values"
 CONF_STATUS_FROM = "status_from"
 CONF_STATUS_MAPPING = "status_mapping"
@@ -112,6 +114,17 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PHASE): cv.one_of(
             "L1", "L2", "L3", "L1-N", "L2-N", "L3-N", upper=True
         ),
+        # Country / regional knobs. nominal_voltage is the EVSE's expected
+        # line voltage — US split-phase 240, US outlet 120, EU single-phase
+        # 230, EU 3-phase line-to-line 400. Used as a Power.Offered fallback
+        # when no live voltage sensor is bound, and as a one-source-of-truth
+        # constant for YAML W→A conversion lambdas.
+        cv.Optional(CONF_NOMINAL_VOLTAGE, default=230.0): cv.positive_float,
+        # True iff this EVSE has a 1p/3p switchable contactor. Default false
+        # (single-phase). EU 3-phase switchable EVSEs set true; this drives
+        # the OCPP ConnectorSwitch3to1PhaseSupported declaration that evcc
+        # reads to override its "Phase switch: yes" UI heuristic.
+        cv.Optional(CONF_PHASE_SWITCHING_SUPPORTED, default=False): cv.boolean,
         cv.Optional(CONF_METER_VALUES): METER_VALUES_SCHEMA,
         cv.Optional(CONF_STATUS_FROM): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_STATUS_MAPPING, default={}): cv.Schema(
@@ -172,6 +185,9 @@ async def to_code(config):
 
     if CONF_PHASE in config:
         cg.add(var.set_phase(config[CONF_PHASE]))
+
+    cg.add(var.set_nominal_voltage(config[CONF_NOMINAL_VOLTAGE]))
+    cg.add(var.set_phase_switching_supported(config[CONF_PHASE_SWITCHING_SUPPORTED]))
 
     if CONF_METER_VALUES in config:
         for key, enum_val in _FIELDS.items():

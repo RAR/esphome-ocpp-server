@@ -54,17 +54,18 @@ void OcppCp::setup() {
   MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20,
                                        CONFIGURATION_VOLATILE);
 
-  // Tell evcc this is not a 1p/3p switchable charger. evcc's PhaseSwitching
+  // Tell evcc whether this is a 1p/3p switchable charger. evcc's PhaseSwitching
   // heuristic in cp_setup.go flips true when the CP advertises W-mode
   // SetChargingProfile support — which we do, so without this declaration
   // evcc shows "Phase switch: yes" in the UI. Declaring
-  // ConnectorSwitch3to1PhaseSupported=false explicitly, read-only, lets
-  // evcc's second-case match override the heuristic. Single-phase EVSEs
-  // should keep this; three-phase switchable EVSEs (none yet) would set
-  // true. CONFIGURATION_VOLATILE because we have no FS, read-only flag
-  // (4th arg) so CSMS-side ChangeConfiguration can't flip it.
+  // ConnectorSwitch3to1PhaseSupported explicitly, read-only, lets evcc's
+  // second-case match override the heuristic. Default false (single-phase
+  // EVSE); EU 3-phase EVSEs with switchable contactors would set true.
+  // CONFIGURATION_VOLATILE because we have no FS, read-only flag (4th arg)
+  // so CSMS-side ChangeConfiguration can't flip it.
   MicroOcpp::declareConfiguration<bool>("ConnectorSwitch3to1PhaseSupported",
-                                        false, CONFIGURATION_VOLATILE, true);
+                                        phase_switching_supported_,
+                                        CONFIGURATION_VOLATILE, true);
 
   // MO's MeteringService default for MeterValuesSampledData is just
   // "Energy.Active.Import.Register,Power.Active.Import" — voltage and current
@@ -164,18 +165,24 @@ void OcppCp::register_callbacks_() {
           return std::isnan(n->state) ? 0.0f : n->state;
         },
         "Current.Offered", "A");
+    // Power.Offered = Current.Offered × voltage. Prefer the live voltage
+    // sensor if bound (tracks mains conditions); otherwise fall back to
+    // nominal_voltage so we still publish a useful value on EVSEs that
+    // don't measure Vrms. Country knob: 230 EU, 240 US split-phase, 120
+    // US outlet, 400 EU 3-phase line-to-line.
     auto volt_it2 = meter_sensors_.find(MeterValueField::VOLTAGE);
-    if (volt_it2 != meter_sensors_.end() && volt_it2->second != nullptr) {
-      auto *v = volt_it2->second;
-      addMeterValueInput(
-          [this, n, v]() -> float {
-            if (csms_disabled_) return 0.0f;
-            float i = std::isnan(n->state) ? 0.0f : n->state;
-            float vv = v->has_state() ? v->state : 0.0f;
-            return i * vv;
-          },
-          "Power.Offered", "W");
-    }
+    sensor::Sensor *v = (volt_it2 != meter_sensors_.end()) ? volt_it2->second
+                                                           : nullptr;
+    addMeterValueInput(
+        [this, n, v]() -> float {
+          if (csms_disabled_) return 0.0f;
+          float i = std::isnan(n->state) ? 0.0f : n->state;
+          float vv = (v != nullptr && v->has_state() && !std::isnan(v->state))
+                         ? v->state
+                         : nominal_voltage_;
+          return i * vv;
+        },
+        "Power.Offered", "W");
   }
 
   // Connector inputs — drive MicroOcpp's connector state machine. Without these

@@ -48,6 +48,19 @@ class OcppCp : public Component {
   void set_model(const std::string &m) { model_ = m; }
   void set_firmware_version(const std::string &v) { firmware_version_ = v; }
   void set_phase(const std::string &p) { phase_ = p; }
+  // Country / regional knobs. nominal_voltage is the EVSE's expected line
+  // voltage (US split-phase 240, US outlet 120, EU single-phase 230,
+  // EU 3-phase line-to-line 400). Used as a Power.Offered fallback when no
+  // live voltage sensor is bound, and exposed via get_nominal_voltage() so
+  // YAML lambdas (e.g. W→A conversion in on_charging_profile_change) can
+  // reference one source of truth instead of hardcoding 240.
+  void set_nominal_voltage(float v) { nominal_voltage_ = v; }
+  float get_nominal_voltage() const { return nominal_voltage_; }
+  // True iff this EVSE has a 1p/3p switchable contactor. Drives the OCPP
+  // ConnectorSwitch3to1PhaseSupported declaration that suppresses evcc's
+  // "Phase switch: yes" UI heuristic. Single-phase EVSEs (most US) leave
+  // this false; EU 3-phase switchable EVSEs set true.
+  void set_phase_switching_supported(bool b) { phase_switching_supported_ = b; }
 
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
@@ -120,6 +133,8 @@ class OcppCp : public Component {
   // — getPhaseKey() in evcc's connector.go expects "<measurand>.L<n>" rows.
   // Empty = no phase attribute, current behavior.
   std::string phase_;
+  float nominal_voltage_{230.0f};
+  bool phase_switching_supported_{false};
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   text_sensor::TextSensor *status_sensor_{nullptr};
