@@ -25,6 +25,14 @@ enum class MeterValueField : uint8_t {
   CURRENT,
   POWER,
   ENERGY,
+  // Optional extras — bound via the same `meter_values:` block. Each maps to
+  // a single OCPP measurand string and a fixed unit. `temperature` defaults
+  // to Location=Body (charger interior) since that's where most EVSEs put
+  // their thermal sensor; `soc` ships Location=EV.
+  TEMPERATURE,
+  SOC,
+  FREQUENCY,
+  POWER_FACTOR,
 };
 
 class OcppCp : public Component {

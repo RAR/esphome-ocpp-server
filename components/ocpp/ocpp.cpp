@@ -56,16 +56,28 @@ void OcppCp::setup() {
   // MO's MeteringService default for MeterValuesSampledData is just
   // "Energy.Active.Import.Register,Power.Active.Import" — voltage and current
   // are dropped from MeterValues even though we feed them in through
-  // addMeterValueInput(). Force the full set so evcc / other CSMSes see V/I/P/E
-  // per sample without having to ChangeConfiguration on every connect.
-  // declareConfiguration is idempotent (returns the existing slot if MO has
-  // already declared it earlier in init), so we setString() to actually move
-  // the runtime value off MO's stingier default.
+  // addMeterValueInput(). Build the list dynamically so we only advertise
+  // measurands that actually have an input bound (otherwise MO logs
+  // "could not find metering device" warnings on every ChangeConfiguration).
+  std::string mvsd_list = "Energy.Active.Import.Register,Power.Active.Import";
+  if (meter_sensors_.count(MeterValueField::VOLTAGE))
+    mvsd_list += ",Voltage";
+  if (meter_sensors_.count(MeterValueField::CURRENT))
+    mvsd_list += ",Current.Import";
+  if (current_offered_number_ != nullptr) mvsd_list += ",Current.Offered";
+  if (current_offered_number_ != nullptr &&
+      meter_sensors_.count(MeterValueField::VOLTAGE))
+    mvsd_list += ",Power.Offered";
+  if (meter_sensors_.count(MeterValueField::TEMPERATURE))
+    mvsd_list += ",Temperature";
+  if (meter_sensors_.count(MeterValueField::SOC)) mvsd_list += ",SoC";
+  if (meter_sensors_.count(MeterValueField::FREQUENCY))
+    mvsd_list += ",Frequency";
+  if (meter_sensors_.count(MeterValueField::POWER_FACTOR))
+    mvsd_list += ",Power.Factor";
   if (auto mvsd = MicroOcpp::declareConfiguration<const char *>(
-          "MeterValuesSampledData",
-          "Energy.Active.Import.Register,Power.Active.Import,Voltage,Current.Import")) {
-    mvsd->setString(
-        "Energy.Active.Import.Register,Power.Active.Import,Voltage,Current.Import");
+          "MeterValuesSampledData", mvsd_list.c_str())) {
+    mvsd->setString(mvsd_list.c_str());
   }
 
   register_callbacks_();
@@ -115,6 +127,22 @@ void OcppCp::register_callbacks_() {
   // the offered current (e.g. a Max Charge Current entity) and we publish
   // both Current.Offered = number.state and (if voltage is bound) the
   // computed Power.Offered = current_offered × voltage_rms.
+  // Optional extras: Temperature, SoC, Frequency, Power.Factor.
+  auto bind_extra = [this](MeterValueField f, const char *measurand,
+                           const char *unit, const char *location) {
+    auto it = meter_sensors_.find(f);
+    if (it == meter_sensors_.end() || it->second == nullptr) return;
+    auto *s = it->second;
+    addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
+                       measurand, unit, location);
+  };
+  // Temperature → charger body. Switch the location string at the call site
+  // if you bind a different sensor (e.g. gun_temp would warrant Location=Cable).
+  bind_extra(MeterValueField::TEMPERATURE, "Temperature", "Celsius", "Body");
+  bind_extra(MeterValueField::SOC, "SoC", "Percent", "EV");
+  bind_extra(MeterValueField::FREQUENCY, "Frequency", "Hertz", nullptr);
+  bind_extra(MeterValueField::POWER_FACTOR, "Power.Factor", nullptr, nullptr);
+
   if (current_offered_number_ != nullptr) {
     auto *n = current_offered_number_;
     addMeterValueInput(

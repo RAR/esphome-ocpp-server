@@ -54,6 +54,10 @@ _FIELDS = {
     "current": MeterValueField.CURRENT,
     "power": MeterValueField.POWER,
     "energy": MeterValueField.ENERGY,
+    "temperature": MeterValueField.TEMPERATURE,
+    "soc": MeterValueField.SOC,
+    "frequency": MeterValueField.FREQUENCY,
+    "power_factor": MeterValueField.POWER_FACTOR,
 }
 
 CONF_CSMS_URL = "csms_url"
