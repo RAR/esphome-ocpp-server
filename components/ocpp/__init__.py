@@ -261,7 +261,8 @@ async def to_code(config):
     # writes longer than 127 chars — exactly what we hit once Temperature,
     # SoC, Frequency, and Power.Factor are all bound. Pin the SHA rather
     # than the branch so future force-pushes to the fork can't break us.
-    # PR upstream: TODO open against matth-x/MicroOcpp.
+    # PR upstream: matth-x/MicroOcpp#450 — once merged + tagged, switch
+    # back to a tagged upstream URL and drop the fork.
     cg.add_library(
         "https://github.com/RAR/MicroOcpp.git#5ac8e0e1f234537d3446e689737057c24a8e8dbb",
         None,
