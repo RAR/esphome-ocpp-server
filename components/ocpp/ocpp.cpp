@@ -418,7 +418,16 @@ std::string OcppCp::build_mvsd_list_() const {
   // false negative but only while HA is offline, which is acceptable.
   add_if(bound_and_ready(MeterValueField::TEMPERATURE, false, false),
          "Temperature");
-  add_if(bound_and_ready(MeterValueField::SOC, true, true), "SoC");
+  // SoC has an extra layer: when soc_plugged_from is bound (e.g. an HA mirror
+  // of the Rivian's own `binary_sensor.r1t_charger_connection`), require it
+  // to also report true. That way SoC is only emitted when the cable is in
+  // the *same* car we're pulling SoC from — a different EV plugged in
+  // doesn't get a phantom Rivian SoC reading.
+  bool soc_ok = bound_and_ready(MeterValueField::SOC, true, true);
+  if (soc_ok && soc_plugged_sensor_ != nullptr) {
+    soc_ok = soc_plugged_sensor_->has_state() && soc_plugged_sensor_->state;
+  }
+  add_if(soc_ok, "SoC");
   add_if(bound_and_ready(MeterValueField::FREQUENCY, true, false),
          "Frequency");
   add_if(bound_and_ready(MeterValueField::POWER_FACTOR, true, false),

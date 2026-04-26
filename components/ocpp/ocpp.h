@@ -52,6 +52,11 @@ class OcppCp : public Component {
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
   void add_status_mapping(const std::string &from, const std::string &to) { status_mapping_[from] = to; }
   void set_plugged_binary_sensor(binary_sensor::BinarySensor *s) { plugged_sensor_ = s; }
+  // Optional second plug confirmation, specifically for SoC. Use when the
+  // SoC source is a particular EV (e.g. R1T) and you want to suppress SoC
+  // unless that EV's own "charger connected" entity also reports true —
+  // otherwise a different car plugged in would get a phantom Rivian SoC.
+  void set_soc_plugged_binary_sensor(binary_sensor::BinarySensor *s) { soc_plugged_sensor_ = s; }
   void set_heartbeat_interval(int seconds) { heartbeat_interval_s_ = seconds; }
   void set_connection_state_text_sensor(text_sensor::TextSensor *s) { connection_state_sensor_ = s; }
   void set_current_offered_number(number::Number *n) { current_offered_number_ = n; }
@@ -115,6 +120,7 @@ class OcppCp : public Component {
   text_sensor::TextSensor *connection_state_sensor_{nullptr};
   std::string last_connection_state_;
   binary_sensor::BinarySensor *plugged_sensor_{nullptr};
+  binary_sensor::BinarySensor *soc_plugged_sensor_{nullptr};
   number::Number *current_offered_number_{nullptr};
   // True when the CSMS has installed a profile whose first period limit is 0
   // (i.e. evcc's `Enable(false)` → SetChargingProfile{limit:0}). MicroOcpp's
