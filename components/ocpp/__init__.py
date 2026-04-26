@@ -255,8 +255,10 @@ async def to_code(config):
     # PIO treats `name=url` as an alias; some PIO versions mis-parse the `=`
     # (git sees it as a protocol). Pass the VCS URL as the library name and
     # skip the alias form.
-    # Use our fork of MicroOcpp (branch `ocpp-server`, based on upstream
-    # main). Carries two patches we depend on:
+    # Use our fork of MicroOcpp (branch `ocpp-server`, based on the v1.2.0
+    # tag — our component targets that API surface; upstream main has since
+    # refactored `Notification.h` and others). Carries two patches we
+    # depend on:
     #
     #   1. MO_CONFIG_MAX_VALSTRSIZE made override-able via -D so the
     #      MeterValuesSampledData advertised list can exceed the upstream
@@ -274,7 +276,7 @@ async def to_code(config):
     # drop the fork. Pin the SHA rather than the branch so future
     # force-pushes to the fork can't break us.
     cg.add_library(
-        "https://github.com/RAR/MicroOcpp.git#ef150844ffccf4b9c3c9a1f55900d41d0e948a25",
+        "https://github.com/RAR/MicroOcpp.git#0ed6ba1ce7ece21665bb1bec571fa2568e388e69",
         None,
     )
     # Raise the ceiling so the full 6-mandatory + 4-optional measurand
