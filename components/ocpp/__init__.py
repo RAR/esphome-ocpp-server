@@ -35,6 +35,12 @@ from esphome.const import CONF_ID, CONF_TRIGGER_ID
 
 CODEOWNERS = ["@andrewrankin"]
 DEPENDENCIES = ["wifi"]
+# ocpp.cpp pulls headers from these platforms unconditionally (status text
+# sensor, plug binary sensor, current_offered Number). AUTO_LOAD ensures
+# the headers are available even if a particular YAML doesn't declare
+# entities of those types — otherwise compile fails with
+# "esphome/components/text_sensor/text_sensor.h: No such file or directory".
+AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor", "number"]
 
 ocpp_ns = cg.esphome_ns.namespace("ocpp")
 OcppCp = ocpp_ns.class_("OcppCp", cg.Component)
