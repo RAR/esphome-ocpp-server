@@ -54,6 +54,18 @@ void OcppCp::setup() {
   MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20,
                                        CONFIGURATION_VOLATILE);
 
+  // Tell evcc this is not a 1p/3p switchable charger. evcc's PhaseSwitching
+  // heuristic in cp_setup.go flips true when the CP advertises W-mode
+  // SetChargingProfile support — which we do, so without this declaration
+  // evcc shows "Phase switch: yes" in the UI. Declaring
+  // ConnectorSwitch3to1PhaseSupported=false explicitly, read-only, lets
+  // evcc's second-case match override the heuristic. Single-phase EVSEs
+  // should keep this; three-phase switchable EVSEs (none yet) would set
+  // true. CONFIGURATION_VOLATILE because we have no FS, read-only flag
+  // (4th arg) so CSMS-side ChangeConfiguration can't flip it.
+  MicroOcpp::declareConfiguration<bool>("ConnectorSwitch3to1PhaseSupported",
+                                        false, CONFIGURATION_VOLATILE, true);
+
   // MO's MeteringService default for MeterValuesSampledData is just
   // "Energy.Active.Import.Register,Power.Active.Import" — voltage and current
   // are dropped from MeterValues even though we feed them in through
