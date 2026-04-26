@@ -176,23 +176,30 @@ void OcppCp::register_callbacks_() {
 
   // SmartCharging output registration MUST come before the SetChargingProfile /
   // ClearChargingProfile observers below — MicroOcpp lazily creates
-  // SmartChargingService inside setSmartChargingPowerOutput, and that's what
-  // registers those two operations in OperationRegistry. setOnReceiveRequest
-  // for an unregistered operation silently fails (only an MO_DBG_ERR at debug
-  // level), so swapping the order here is what ultimately wires the observer
-  // up to a real handler.
-  // current_limit_A == -1.0f / power_limit_W == -1.0f means "no limit" (pass
-  // through hardware default). limit==0 from the engine never actually fires
-  // for evcc-style `SetChargingProfile{limit:0}` because MO interprets that
-  // as "no constraint" — see the SetChargingProfile observer for the real
-  // disable-detection path.
-  setSmartChargingCurrentOutput([this](float current_limit_a) {
-    ESP_LOGD(TAG, "SmartCharging current limit: %.1f A", current_limit_a);
-    for (auto &cb : charging_profile_callbacks_) cb(current_limit_a, -1.0f, -1);
-  });
-  setSmartChargingPowerOutput([this](float power_limit_w) {
-    ESP_LOGD(TAG, "SmartCharging power limit: %.1f W", power_limit_w);
-    for (auto &cb : charging_profile_callbacks_) cb(-1.0f, power_limit_w, -1);
+  // SmartChargingService inside the SmartCharging registration call, and that's
+  // what registers those two operations in OperationRegistry.
+  //
+  // Use the unified setSmartChargingOutput rather than the per-axis
+  // setSmartChargingCurrentOutput / setSmartChargingPowerOutput pair: both of
+  // those internally write the same wrapper slot (the second call clobbers
+  // the first), and the survivor sets ChargingScheduleAllowedChargingRateUnit
+  // to "Power" — which is exactly the value evcc's PhaseSwitching heuristic
+  // matches (`if v == "Power" || v == "W"` in cp_setup.go), causing it to
+  // flip "Phase switch: yes" in the UI for any single-phase EVSE that
+  // accepts W-mode profiles. Calling setSmartChargingOutput sets the unit
+  // string to "Current,Power" instead — evcc's exact-string match fails,
+  // PhaseSwitching stays false, *and* we still see both A- and W-mode
+  // profiles via a single callback.
+  //
+  // Sentinels: power == -1.0f / current == -1.0f / nphases == -1 mean
+  // "not set" (pass through hardware default). limit==0 from the engine
+  // never fires for evcc-style `SetChargingProfile{limit:0}` because MO
+  // interprets that as "no constraint" — see the SetChargingProfile
+  // observer for the real disable-detection path.
+  setSmartChargingOutput([this](float power, float current, int nphases) {
+    ESP_LOGD(TAG, "SmartCharging output: %.1f W / %.1f A / %d phases", power,
+             current, nphases);
+    for (auto &cb : charging_profile_callbacks_) cb(current, power, nphases);
   });
 
   // RemoteStart/RemoteStopTransaction observers — purely for INFO-level
