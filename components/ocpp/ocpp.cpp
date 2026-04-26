@@ -390,14 +390,32 @@ void OcppCp::loop() {
 }
 
 std::string OcppCp::build_mvsd_list_() const {
-  std::string list = "Energy.Active.Import.Register,Power.Active.Import";
+  // MicroOcpp's Configuration::setString rejects strings longer than
+  // MO_CONFIG_MAX_VALSTRSIZE (128 chars including null terminator) and
+  // silently returns false. The full set of measurands we'd like to
+  // advertise (6 mandatory + Temperature + SoC + Frequency + Power.Factor
+  // = 138 chars) overflows that, so a too-long write leaves the slot at
+  // whatever the CSMS last set — which is why this manifested as evcc's
+  // 107-char list permanently overriding ours despite our refresh "succeeding".
+  // Pack in priority order and skip any entry that would push us over 127
+  // chars. Lower-priority extras (Power.Factor → Frequency → Temperature)
+  // get dropped first; the 6 mandatory measurands always fit.
+  static constexpr size_t kMaxLen = 127;
+  std::string list;
   auto add_if = [&](bool cond, const char *m) {
-    if (cond) {
-      list += ",";
-      list += m;
+    if (!cond) return;
+    size_t add = strlen(m) + (list.empty() ? 0 : 1);
+    if (list.size() + add > kMaxLen) {
+      ESP_LOGW(TAG, "MVSD: dropping %s (would exceed %u-char MO limit)", m,
+               (unsigned) kMaxLen);
+      return;
     }
+    if (!list.empty()) list += ",";
+    list += m;
   };
-  // Always-on local sensors — present whenever bound.
+  // Mandatory base — these always fit (102 chars).
+  add_if(true, "Energy.Active.Import.Register");
+  add_if(true, "Power.Active.Import");
   add_if(meter_sensors_.count(MeterValueField::VOLTAGE) > 0, "Voltage");
   add_if(meter_sensors_.count(MeterValueField::CURRENT) > 0, "Current.Import");
   // Current/Power.Offered come from the user-bound Number. Drop them while
