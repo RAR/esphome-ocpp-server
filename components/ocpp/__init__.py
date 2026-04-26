@@ -255,16 +255,26 @@ async def to_code(config):
     # PIO treats `name=url` as an alias; some PIO versions mis-parse the `=`
     # (git sees it as a protocol). Pass the VCS URL as the library name and
     # skip the alias form.
-    # Use our fork of MicroOcpp v1.2.0 with MO_CONFIG_MAX_VALSTRSIZE made
-    # override-able via -D (commit 5ac8e0e). Upstream hardcodes the
-    # 128-byte ceiling, which silently rejects MeterValuesSampledData
-    # writes longer than 127 chars — exactly what we hit once Temperature,
-    # SoC, Frequency, and Power.Factor are all bound. Pin the SHA rather
-    # than the branch so future force-pushes to the fork can't break us.
-    # PR upstream: matth-x/MicroOcpp#450 — once merged + tagged, switch
-    # back to a tagged upstream URL and drop the fork.
+    # Use our fork of MicroOcpp (branch `ocpp-server`, based on upstream
+    # main). Carries two patches we depend on:
+    #
+    #   1. MO_CONFIG_MAX_VALSTRSIZE made override-able via -D so the
+    #      MeterValuesSampledData advertised list can exceed the upstream
+    #      128-byte ceiling. Upstream PR: matth-x/MicroOcpp#450
+    #
+    #   2. Clock::now() guard against implausible time deltas (skips the
+    #      update if delta > 1 h instead of applying a ~12 h jump caused
+    #      by 32-bit tick-counter overflow). Defensive on Arduino too —
+    #      millis() wraps at ~49.7 days. Cherry-picked from upstream PR
+    #      matth-x/MicroOcpp#447 (just the Time.cpp commits — the espidf
+    #      Platform.cpp fix doesn't apply to our MO_PLATFORM_ARDUINO
+    #      build).
+    #
+    # Once both PRs land + tag, switch back to a tagged upstream URL and
+    # drop the fork. Pin the SHA rather than the branch so future
+    # force-pushes to the fork can't break us.
     cg.add_library(
-        "https://github.com/RAR/MicroOcpp.git#5ac8e0e1f234537d3446e689737057c24a8e8dbb",
+        "https://github.com/RAR/MicroOcpp.git#ef150844ffccf4b9c3c9a1f55900d41d0e948a25",
         None,
     )
     # Raise the ceiling so the full 6-mandatory + 4-optional measurand
