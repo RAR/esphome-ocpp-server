@@ -56,6 +56,14 @@ ocpp:
   phase: L1                          # OCPP phase tag for V/I (single-phase: L1)
   nominal_voltage: 240.0             # 120 US outlet / 230 EU 1ϕ / 240 US split / 400 EU 3ϕ L-L
   phase_switching_supported: false   # true only for EU 3-phase 1p3p switchable EVSEs
+  # 3-phase EVSEs swap the `phase:` scalar above for a `phases:` list and
+  # use {l1,l2,l3} dicts under voltage / current in meter_values:
+  #   phases: [L1, L2, L3]
+  #   meter_values:
+  #     voltage: {l1: v_l1, l2: v_l2, l3: v_l3}
+  #     current: {l1: i_l1, l2: i_l2, l3: i_l3}
+  #     power: total_power
+  #     energy: total_energy
   heartbeat_interval: 60s            # pin Heartbeat (CSMSes often default to hours)
   meter_values:
     voltage: voltage_a_sensor        # → Voltage (V)
