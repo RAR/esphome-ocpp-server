@@ -71,6 +71,7 @@ ocpp:
   #     power: total_power
   #     energy: total_energy
   heartbeat_interval: 60s            # pin Heartbeat (CSMSes often default to hours)
+  meter_value_sample_interval: 30s   # pin MeterValueSampleInterval (≥30s for evcc)
   meter_values:
     voltage: voltage_a_sensor        # → Voltage (V)
     current: current_a_sensor        # → Current.Import (A)
@@ -105,6 +106,14 @@ ocpp:
         } else if (current_limit_a > 0.0f) {
           // forward to charger's max-current control
         }
+  on_trigger_message:                # CSMS-initiated diagnostic poll
+    - lambda: |-
+        ESP_LOGI("evcc", "TriggerMessage: %s connector=%d",
+                 requested_message.c_str(), connector_id);
+  on_data_transfer:                  # CSMS-side vendor extension messages
+    - lambda: |-
+        ESP_LOGI("vendor", "DataTransfer: %s/%s data=%s",
+                 vendor_id.c_str(), message_id.c_str(), data.c_str());
 
 text_sensor:
   - platform: ocpp
