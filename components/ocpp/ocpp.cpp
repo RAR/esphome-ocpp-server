@@ -138,7 +138,11 @@ void OcppCp::register_callbacks_() {
   // if you bind a different sensor (e.g. gun_temp would warrant Location=Cable).
   bind_extra(MeterValueField::TEMPERATURE, "Temperature", "Celsius", "Body");
   bind_extra(MeterValueField::SOC, "SoC", "Percent", "EV");
-  bind_extra(MeterValueField::FREQUENCY, "Frequency", "Hertz", nullptr);
+  // OCPP 1.6's unitOfMeasure enum doesn't include Hertz (added in 2.0.1) —
+  // strict CSMSes (evcc) reject the whole MeterValues frame as a
+  // GenericError when they see `unit: Hertz`. Pass nullptr so MO omits the
+  // unit attribute entirely; the Frequency measurand still goes through.
+  bind_extra(MeterValueField::FREQUENCY, "Frequency", nullptr, nullptr);
   bind_extra(MeterValueField::POWER_FACTOR, "Power.Factor", nullptr, nullptr);
 
   if (current_offered_number_ != nullptr) {
