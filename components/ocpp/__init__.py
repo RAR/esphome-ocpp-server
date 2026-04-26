@@ -47,6 +47,14 @@ ChargingProfileChangeTrigger = ocpp_ns.class_(
     "ChargingProfileChangeTrigger",
     automation.Trigger.template(cg.float_, cg.float_, cg.int_),
 )
+TriggerMessageTrigger = ocpp_ns.class_(
+    "TriggerMessageTrigger",
+    automation.Trigger.template(cg.std_string, cg.int_),
+)
+DataTransferTrigger = ocpp_ns.class_(
+    "DataTransferTrigger",
+    automation.Trigger.template(cg.std_string, cg.std_string, cg.std_string),
+)
 
 MeterValueField = ocpp_ns.enum("MeterValueField", is_class=True)
 _FIELDS = {
@@ -79,11 +87,14 @@ CONF_STATUS_MAPPING = "status_mapping"
 CONF_PLUGGED_FROM = "plugged_from"
 CONF_SOC_PLUGGED_FROM = "soc_plugged_from"
 CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
+CONF_METER_VALUE_SAMPLE_INTERVAL = "meter_value_sample_interval"
 CONF_ON_REMOTE_START = "on_remote_start"
 CONF_ON_REMOTE_STOP = "on_remote_stop"
 CONF_ON_RESET = "on_reset"
 CONF_ON_UNLOCK_CONNECTOR = "on_unlock_connector"
 CONF_ON_CHARGING_PROFILE_CHANGE = "on_charging_profile_change"
+CONF_ON_TRIGGER_MESSAGE = "on_trigger_message"
+CONF_ON_DATA_TRANSFER = "on_data_transfer"
 
 
 CONF_CURRENT_OFFERED = "current_offered"
@@ -201,6 +212,16 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PLUGGED_FROM): cv.use_id(binary_sensor.BinarySensor),
         cv.Optional(CONF_SOC_PLUGGED_FROM): cv.use_id(binary_sensor.BinarySensor),
         cv.Optional(CONF_HEARTBEAT_INTERVAL): cv.positive_time_period_seconds,
+        # Pin OCPP `MeterValueSampleInterval` (seconds between MeterValues
+        # frames during a transaction). Same re-pin pattern as
+        # heartbeat_interval — we override the value MicroOcpp / the CSMS
+        # would otherwise pick on every loop, so a CSMS-side
+        # ChangeConfiguration won't drift it back. evcc's "current
+        # mismatch" remediation suggests ≥30s; some hardware-locked EVSEs
+        # benefit from 60s+.
+        cv.Optional(
+            CONF_METER_VALUE_SAMPLE_INTERVAL
+        ): cv.positive_time_period_seconds,
         cv.Optional(CONF_ON_REMOTE_START): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteStartTrigger)}
         ),
@@ -215,6 +236,12 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_ON_CHARGING_PROFILE_CHANGE): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ChargingProfileChangeTrigger)}
+        ),
+        cv.Optional(CONF_ON_TRIGGER_MESSAGE): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(TriggerMessageTrigger)}
+        ),
+        cv.Optional(CONF_ON_DATA_TRANSFER): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DataTransferTrigger)}
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -303,6 +330,12 @@ async def to_code(config):
 
     if CONF_HEARTBEAT_INTERVAL in config:
         cg.add(var.set_heartbeat_interval(int(config[CONF_HEARTBEAT_INTERVAL].total_seconds)))
+    if CONF_METER_VALUE_SAMPLE_INTERVAL in config:
+        cg.add(
+            var.set_meter_value_sample_interval(
+                int(config[CONF_METER_VALUE_SAMPLE_INTERVAL].total_seconds)
+            )
+        )
 
     for conf in config.get(CONF_ON_REMOTE_START, []):
         trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
@@ -324,6 +357,24 @@ async def to_code(config):
                 (cg.float_, "current_limit_a"),
                 (cg.float_, "power_limit_w"),
                 (cg.int_, "n_phases"),
+            ],
+            conf,
+        )
+    for conf in config.get(CONF_ON_TRIGGER_MESSAGE, []):
+        trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig,
+            [(cg.std_string, "requested_message"), (cg.int_, "connector_id")],
+            conf,
+        )
+    for conf in config.get(CONF_ON_DATA_TRANSFER, []):
+        trig = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig,
+            [
+                (cg.std_string, "vendor_id"),
+                (cg.std_string, "message_id"),
+                (cg.std_string, "data"),
             ],
             conf,
         )

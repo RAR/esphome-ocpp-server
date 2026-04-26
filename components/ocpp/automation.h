@@ -55,5 +55,38 @@ class ChargingProfileChangeTrigger : public Trigger<float, float, int> {
   }
 };
 
+// CSMS sent a TriggerMessage. MicroOcpp itself satisfies the request
+// (queues the requested StatusNotification / MeterValues / etc. — see
+// MO's Operations/TriggerMessage.cpp); this trigger is purely diagnostic
+// so YAML can log it or count it. `requested_message` is the exact string
+// from the request ("StatusNotification", "MeterValues", ...);
+// `connector_id` is -1 when the CSMS didn't scope it.
+class TriggerMessageTrigger : public Trigger<std::string, int> {
+ public:
+  explicit TriggerMessageTrigger(OcppCp *parent) {
+    parent->add_on_trigger_message_callback(
+        [this](const std::string &requested_message, int connector_id) {
+          this->trigger(requested_message, connector_id);
+        });
+  }
+};
+
+// CSMS sent a DataTransfer.req — vendor-specific extension messages.
+// `vendor_id` and `message_id` come straight from the request; `data` is
+// the JSON-serialized contents of the request's `data` field (or "" if
+// absent). The component always replies Accepted with no data; if you
+// need richer responses, change the API to take a return value.
+class DataTransferTrigger
+    : public Trigger<std::string, std::string, std::string> {
+ public:
+  explicit DataTransferTrigger(OcppCp *parent) {
+    parent->add_on_data_transfer_callback(
+        [this](const std::string &vendor_id, const std::string &message_id,
+               const std::string &data) {
+          this->trigger(vendor_id, message_id, data);
+        });
+  }
+};
+
 }  // namespace ocpp
 }  // namespace esphome

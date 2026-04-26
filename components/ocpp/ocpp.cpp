@@ -54,6 +54,15 @@ void OcppCp::setup() {
   MicroOcpp::declareConfiguration<int>("WebSocketPingInterval", 20,
                                        CONFIGURATION_VOLATILE);
 
+  // Pre-seed MeterValueSampleInterval before MO's MeteringConnector
+  // declares its default. enforce_meter_value_sample_interval_() in loop()
+  // would re-pin anyway, but seeding here means the first MeterValues
+  // batch after BootNotification fires at the configured cadence.
+  if (meter_value_sample_interval_s_ > 0) {
+    MicroOcpp::declareConfiguration<int>("MeterValueSampleInterval",
+                                         meter_value_sample_interval_s_);
+  }
+
   // Tell evcc whether this is a 1p/3p switchable charger. evcc's PhaseSwitching
   // heuristic in cp_setup.go flips true when the CP advertises W-mode
   // SetChargingProfile support — which we do, so without this declaration
@@ -468,6 +477,61 @@ void OcppCp::register_callbacks_() {
     int connector_id = payload["connectorId"] | 1;
     for (auto &cb : unlock_callbacks_) cb(connector_id);
   });
+
+  // TriggerMessage diagnostic observer. MicroOcpp's built-in
+  // Operations/TriggerMessage handler does the actual work — it queues
+  // StatusNotification / MeterValues / etc. via takeTriggeredMeterValues
+  // and triggerStatusNotification. This observer just gives YAML a hook
+  // to log or count CSMS-initiated polls. CSMS test buttons (SteVe's
+  // Operations tab, evcc's debug panel) all funnel through here.
+  setOnReceiveRequest("TriggerMessage", [this](JsonObject payload) {
+    std::string requested = payload["requestedMessage"] | "?";
+    int connector_id = payload["connectorId"] | -1;
+    ESP_LOGI(TAG, "TriggerMessage: requested=%s connector=%d",
+             requested.c_str(), connector_id);
+    for (auto &cb : trigger_message_callbacks_) cb(requested, connector_id);
+  });
+
+  // DataTransfer custom request handler. setRequestHandler *replaces* MO's
+  // built-in DataTransfer (which always returns Rejected); we capture the
+  // request, fire the YAML callbacks, and reply Accepted with no data. If
+  // there are no DataTransfer callbacks bound, leave MO's stock handler in
+  // place — it returns the OCPP-default Rejected, which is the right
+  // answer for a CP that doesn't speak any vendor extensions.
+  if (!data_transfer_callbacks_.empty()) {
+    setRequestHandler("DataTransfer",
+        [this](JsonObject request) {
+          std::string vendor = request["vendorId"] | "";
+          std::string message = request["messageId"] | "";
+          std::string data;
+          // The data field is OCPP-typed as `string` but vendors often ship
+          // structured JSON inside. Serialize back to a string so YAML can
+          // parse it (or just log it). serializeJson with the raw variant
+          // copes with strings, objects, arrays, numbers identically.
+          if (request.containsKey("data")) {
+            JsonVariant d = request["data"];
+            if (d.is<const char *>()) {
+              data = d.as<const char *>();
+            } else {
+              serializeJson(d, data);
+            }
+          }
+          ESP_LOGI(TAG,
+                   "DataTransfer: vendor='%s' message='%s' data='%s'",
+                   vendor.c_str(), message.c_str(), data.c_str());
+          for (auto &cb : data_transfer_callbacks_) cb(vendor, message, data);
+        },
+        []() -> std::unique_ptr<MicroOcpp::JsonDoc> {
+          // Fixed Accepted reply, no data. Matches "the message was
+          // received and processed" semantics — sufficient for the
+          // observer/automation use case.
+          auto res = std::unique_ptr<MicroOcpp::JsonDoc>(
+              new MicroOcpp::JsonDoc(JSON_OBJECT_SIZE(1)));
+          JsonObject response = res->to<JsonObject>();
+          response["status"] = "Accepted";
+          return res;
+        });
+  }
 }
 
 void OcppCp::loop() {
@@ -475,6 +539,7 @@ void OcppCp::loop() {
   mocpp_loop();
   poll_status_();
   enforce_heartbeat_interval_();
+  enforce_meter_value_sample_interval_();
   publish_connection_state_();
   refresh_mvsd_();
 }
@@ -653,6 +718,25 @@ void OcppCp::enforce_heartbeat_interval_() {
   if (cfg && cfg->getInt() != heartbeat_interval_s_) {
     cfg->setInt(heartbeat_interval_s_);
     ESP_LOGD(TAG, "HeartbeatInterval forced to %d s", heartbeat_interval_s_);
+  }
+}
+
+void OcppCp::enforce_meter_value_sample_interval_() {
+  // MicroOcpp defaults MeterValueSampleInterval to 60 s but exposes it as a
+  // standard ChangeConfiguration key — evcc / SteVe / Monta will all rewrite
+  // it on the post-boot config push. Same enforce-every-5-s pattern as
+  // HeartbeatInterval so the YAML-pinned value always wins after at most one
+  // 5-second window.
+  if (meter_value_sample_interval_s_ <= 0) return;
+  uint32_t now = millis();
+  if (now - last_mvsi_check_ms_ < 5000) return;
+  last_mvsi_check_ms_ = now;
+  auto cfg = MicroOcpp::declareConfiguration<int>(
+      "MeterValueSampleInterval", meter_value_sample_interval_s_);
+  if (cfg && cfg->getInt() != meter_value_sample_interval_s_) {
+    cfg->setInt(meter_value_sample_interval_s_);
+    ESP_LOGD(TAG, "MeterValueSampleInterval forced to %d s",
+             meter_value_sample_interval_s_);
   }
 }
 

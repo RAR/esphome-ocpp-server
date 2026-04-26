@@ -91,6 +91,12 @@ class OcppCp : public Component {
   // otherwise a different car plugged in would get a phantom Rivian SoC.
   void set_soc_plugged_binary_sensor(binary_sensor::BinarySensor *s) { soc_plugged_sensor_ = s; }
   void set_heartbeat_interval(int seconds) { heartbeat_interval_s_ = seconds; }
+  // Same re-pin pattern as heartbeat_interval — overrides the default 60 s
+  // and re-asserts every 5 s in loop() so a CSMS-side ChangeConfiguration
+  // can't drift it back. 0 leaves MO's default.
+  void set_meter_value_sample_interval(int seconds) {
+    meter_value_sample_interval_s_ = seconds;
+  }
   void set_connection_state_text_sensor(text_sensor::TextSensor *s) { connection_state_sensor_ = s; }
   void set_current_offered_number(number::Number *n) { current_offered_number_ = n; }
 
@@ -109,6 +115,20 @@ class OcppCp : public Component {
   void add_on_charging_profile_change_callback(
       std::function<void(float, float, int)> cb) {
     charging_profile_callbacks_.push_back(std::move(cb));
+  }
+  void add_on_trigger_message_callback(
+      std::function<void(const std::string &, int)> cb) {
+    trigger_message_callbacks_.push_back(std::move(cb));
+  }
+  // DataTransfer is request/response. The lambda runs on every CSMS-side
+  // DataTransfer.req; we always reply Accepted (with no data). If a future
+  // use case needs richer responses (UnknownVendor / UnknownMessageId / a
+  // payload), extend the API to take a return value rather than retrofit
+  // hidden state.
+  void add_on_data_transfer_callback(
+      std::function<void(const std::string &, const std::string &,
+                         const std::string &)> cb) {
+    data_transfer_callbacks_.push_back(std::move(cb));
   }
 
   // YAML-callable: end the active OCPP transaction (sends StopTransaction.req
@@ -133,6 +153,7 @@ class OcppCp : public Component {
   bool is_ev_ready_() const;
   bool is_evse_ready_() const;
   void enforce_heartbeat_interval_();
+  void enforce_meter_value_sample_interval_();
   void publish_connection_state_();
   // Builds the comma-separated MeterValuesSampledData string from the bound
   // sensors. HA-mirrored extras (Temperature, SoC, Frequency, Power.Factor)
@@ -192,7 +213,9 @@ class OcppCp : public Component {
   std::string last_source_status_;
   std::string mapped_status_{"Available"};
   int heartbeat_interval_s_{0};  // 0 = let CSMS decide
+  int meter_value_sample_interval_s_{0};  // 0 = let CSMS decide / MO default
   uint32_t last_hb_check_ms_{0};
+  uint32_t last_mvsi_check_ms_{0};
   uint32_t last_mvsd_check_ms_{0};
 
   std::vector<std::function<void(const std::string &)>> remote_start_callbacks_;
@@ -200,6 +223,11 @@ class OcppCp : public Component {
   std::vector<std::function<void(const std::string &)>> reset_callbacks_;
   std::vector<std::function<void(int)>> unlock_callbacks_;
   std::vector<std::function<void(float, float, int)>> charging_profile_callbacks_;
+  std::vector<std::function<void(const std::string &, int)>>
+      trigger_message_callbacks_;
+  std::vector<std::function<void(const std::string &, const std::string &,
+                                 const std::string &)>>
+      data_transfer_callbacks_;
 
   WsClient *ws_{nullptr};
   MoConnection *mo_conn_{nullptr};
