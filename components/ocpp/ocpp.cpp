@@ -540,6 +540,7 @@ void OcppCp::loop() {
   poll_status_();
   enforce_heartbeat_interval_();
   enforce_meter_value_sample_interval_();
+  enforce_stop_txn_sampled_data_();
   publish_connection_state_();
   refresh_mvsd_();
 }
@@ -670,6 +671,28 @@ void OcppCp::end_transaction(const std::string &reason) {
   ::endTransaction(nullptr, reason.c_str(), 1);
 }
 
+bool OcppCp::start_transaction(const std::string &id_tag) {
+  if (!initialized_) return false;
+  if (id_tag.empty()) {
+    ESP_LOGW(TAG, "start_transaction: empty idTag");
+    return false;
+  }
+  ESP_LOGI(TAG, "start_transaction (idTag=%s)", id_tag.c_str());
+  // beginTransaction returns nullptr if another transaction is already
+  // active or it refuses for any reason (e.g. connector unavailable).
+  auto tx = ::beginTransaction(id_tag.c_str(), 1);
+  return tx != nullptr;
+}
+
+bool OcppCp::end_transaction_with_idtag(const std::string &id_tag,
+                                        const std::string &reason) {
+  if (!initialized_) return false;
+  ESP_LOGI(TAG, "end_transaction (idTag=%s reason=%s)",
+           id_tag.c_str(), reason.c_str());
+  return ::endTransaction(id_tag.empty() ? nullptr : id_tag.c_str(),
+                          reason.c_str(), 1);
+}
+
 void OcppCp::publish_connection_state_() {
   if (connection_state_sensor_ == nullptr || ws_ == nullptr) return;
   const char *s;
@@ -717,6 +740,33 @@ void OcppCp::enforce_heartbeat_interval_() {
     cfg->setInt(heartbeat_interval_s_);
     ESP_LOGD(TAG, "HeartbeatInterval forced to %d s", heartbeat_interval_s_);
   }
+}
+
+void OcppCp::enforce_stop_txn_sampled_data_() {
+  // OCPP 1.6 StopTxnSampledData: measurands shipped only with the
+  // StopTransaction.req transcript (separate from the periodic
+  // MeterValuesSampledData feed). Re-pin every 5 s like the other config
+  // overrides — MO's validateSelectString rejects entries without a
+  // registered sampler, so this can't fire before register_callbacks_()
+  // has wired all addMeterValueInput calls. Empty user value means
+  // "leave MO's default" — no override.
+  if (stop_txn_sampled_data_.empty()) return;
+  uint32_t now = millis();
+  if (now - last_stop_txn_check_ms_ < 5000) return;
+  last_stop_txn_check_ms_ = now;
+  auto cfg =
+      MicroOcpp::declareConfiguration<const char *>("StopTxnSampledData", "");
+  if (cfg == nullptr) return;
+  const char *cur = cfg->getString();
+  if (cur != nullptr && stop_txn_sampled_data_ == cur) return;
+  if (!cfg->setString(stop_txn_sampled_data_.c_str())) {
+    ESP_LOGW(TAG,
+             "StopTxnSampledData rejected (likely an entry without a bound "
+             "sensor): %s",
+             stop_txn_sampled_data_.c_str());
+    return;
+  }
+  ESP_LOGI(TAG, "StopTxnSampledData: %s", stop_txn_sampled_data_.c_str());
 }
 
 void OcppCp::enforce_meter_value_sample_interval_() {
@@ -874,6 +924,18 @@ void OcppCp::dump_config() {
     ESP_LOGCONFIG(TAG, "    Heartbeat interval: %d s", heartbeat_interval_s_);
   else
     ESP_LOGCONFIG(TAG, "    Heartbeat interval: <CSMS-decided>");
+  if (meter_value_sample_interval_s_ > 0)
+    ESP_LOGCONFIG(TAG, "    MeterValueSampleInterval: %d s",
+                  meter_value_sample_interval_s_);
+  if (!stop_txn_sampled_data_.empty())
+    ESP_LOGCONFIG(TAG, "    StopTxnSampledData: %s",
+                  stop_txn_sampled_data_.c_str());
+
+  // LocalAuthList. MicroOcpp auto-handles SendLocalList /
+  // GetLocalListVersion as long as MO_ENABLE_LOCAL_AUTH=1 (default).
+  // With MO_USE_FILEAPI=DISABLE_FS the list is in-memory only — survives
+  // CSMS-pushed updates at runtime but resets on every boot.
+  ESP_LOGCONFIG(TAG, "  Local auth list: in-memory (no FS, no persistence)");
 
   // Automation hookup counts.
   ESP_LOGCONFIG(TAG, "  Automations bound:");

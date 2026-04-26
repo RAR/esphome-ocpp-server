@@ -88,6 +88,7 @@ CONF_PLUGGED_FROM = "plugged_from"
 CONF_SOC_PLUGGED_FROM = "soc_plugged_from"
 CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
 CONF_METER_VALUE_SAMPLE_INTERVAL = "meter_value_sample_interval"
+CONF_STOP_TXN_SAMPLED_DATA = "stop_txn_sampled_data"
 CONF_ON_REMOTE_START = "on_remote_start"
 CONF_ON_REMOTE_STOP = "on_remote_stop"
 CONF_ON_RESET = "on_reset"
@@ -222,6 +223,19 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_METER_VALUE_SAMPLE_INTERVAL
         ): cv.positive_time_period_seconds,
+        # Separate measurand list shipped *only* with StopTransaction.req
+        # (the per-transaction transcript), distinct from the periodic
+        # MeterValues feed driven by MeterValuesSampledData. CSMSes that
+        # bill from the StopTx transcript benefit from a tighter,
+        # billing-only set (typically just energy + SoC). Empty / absent
+        # leaves MO's default (= no sampled data in the StopTx).
+        # Re-pinned every 5 s in loop() so a CSMS ChangeConfiguration
+        # can't drift it back. Each entry must match an OCPP 1.6
+        # measurand string and have a corresponding sensor under
+        # meter_values:.
+        cv.Optional(CONF_STOP_TXN_SAMPLED_DATA): cv.ensure_list(
+            cv.string_strict
+        ),
         cv.Optional(CONF_ON_REMOTE_START): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RemoteStartTrigger)}
         ),
@@ -362,6 +376,12 @@ async def to_code(config):
         cg.add(
             var.set_meter_value_sample_interval(
                 int(config[CONF_METER_VALUE_SAMPLE_INTERVAL].total_seconds)
+            )
+        )
+    if CONF_STOP_TXN_SAMPLED_DATA in config:
+        cg.add(
+            var.set_stop_txn_sampled_data(
+                ",".join(config[CONF_STOP_TXN_SAMPLED_DATA])
             )
         )
 

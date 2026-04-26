@@ -97,6 +97,13 @@ class OcppCp : public Component {
   void set_meter_value_sample_interval(int seconds) {
     meter_value_sample_interval_s_ = seconds;
   }
+  // OCPP 1.6 StopTxnSampledData — measurands shipped only at StopTransaction.
+  // Stored as a comma-separated list (already joined in __init__.py).
+  // Defence-in-depth length cap: stays well under MO_CONFIG_MAX_VALSTRSIZE
+  // (default 128, our build raises to 256).
+  void set_stop_txn_sampled_data(const std::string &csv) {
+    stop_txn_sampled_data_ = csv;
+  }
   void set_connection_state_text_sensor(text_sensor::TextSensor *s) { connection_state_sensor_ = s; }
   void set_current_offered_number(number::Number *n) { current_offered_number_ = n; }
 
@@ -140,6 +147,27 @@ class OcppCp : public Component {
   // PowerLoss / Reboot / SoftReset / HardReset / DeAuthorized.
   void end_transaction(const std::string &reason = "Local");
 
+  // YAML-callable RFID/local-auth start. Calls MicroOcpp::beginTransaction
+  // which:
+  //   1) checks LocalAuthList (auto-populated from CSMS SendLocalList)
+  //   2) if not in list / list disabled, sends Authorize.req to CSMS
+  //   3) if accepted AND plug present AND EV ready, fires StartTransaction
+  // The success path arrives at the existing on_remote_start automation
+  // via TxNotification::StartTx. Failures (rejected / expired / unknown
+  // tag, or CSMS timeout) are logged at WARN by the TxNotification handler
+  // — no transaction is started, so no rippleon-side action needed.
+  // Returns true if a transaction process began (i.e. no other transaction
+  // already active); false if already-running or beginTransaction refused.
+  bool start_transaction(const std::string &id_tag);
+
+  // OCPP-correct stop with idTag (for RFID-swipe-to-stop). Calls
+  // MicroOcpp::endTransaction which checks the parentIdTag rules + falls
+  // through to Authorize if the swiped tag isn't the one that started the
+  // session. The reason-only end_transaction(...) above is the
+  // CSMS-initiated fallback.
+  bool end_transaction_with_idtag(const std::string &id_tag,
+                                  const std::string &reason = "Local");
+
  protected:
   void init_microocpp_();
   void register_callbacks_();
@@ -154,6 +182,7 @@ class OcppCp : public Component {
   bool is_evse_ready_() const;
   void enforce_heartbeat_interval_();
   void enforce_meter_value_sample_interval_();
+  void enforce_stop_txn_sampled_data_();
   void publish_connection_state_();
   // Builds the comma-separated MeterValuesSampledData string from the bound
   // sensors. HA-mirrored extras (Temperature, SoC, Frequency, Power.Factor)
@@ -214,8 +243,10 @@ class OcppCp : public Component {
   std::string mapped_status_{"Available"};
   int heartbeat_interval_s_{0};  // 0 = let CSMS decide
   int meter_value_sample_interval_s_{0};  // 0 = let CSMS decide / MO default
+  std::string stop_txn_sampled_data_;  // empty = MO default = no StopTx samples
   uint32_t last_hb_check_ms_{0};
   uint32_t last_mvsi_check_ms_{0};
+  uint32_t last_stop_txn_check_ms_{0};
   uint32_t last_mvsd_check_ms_{0};
 
   std::vector<std::function<void(const std::string &)>> remote_start_callbacks_;
