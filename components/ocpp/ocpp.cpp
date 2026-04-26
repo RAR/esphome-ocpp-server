@@ -384,13 +384,15 @@ std::string OcppCp::build_mvsd_list_() const {
   add_if(current_offered_number_ != nullptr &&
              meter_sensors_.count(MeterValueField::VOLTAGE) > 0,
          "Power.Offered");
-  // HA-mirrored extras: include only when has_state() — drops SoC from the
-  // wire frame while the vehicle integration is unavailable, instead of
-  // reporting a misleading 0%.
+  // HA-mirrored extras: include only when has_state() AND the value isn't
+  // NaN. ESPHome's homeassistant: platform marks `unavailable` HA entities
+  // with state=NaN but leaves has_state()=true, so without the isnan guard
+  // we'd advertise SoC and ship `"value":"nan"` rows in MeterValues.
   auto bound_and_ready = [&](MeterValueField f) {
     auto it = meter_sensors_.find(f);
-    return it != meter_sensors_.end() && it->second != nullptr &&
-           it->second->has_state();
+    if (it == meter_sensors_.end() || it->second == nullptr) return false;
+    auto *s = it->second;
+    return s->has_state() && !std::isnan(s->state);
   };
   add_if(bound_and_ready(MeterValueField::TEMPERATURE), "Temperature");
   add_if(bound_and_ready(MeterValueField::SOC), "SoC");
