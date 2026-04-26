@@ -72,6 +72,9 @@ ocpp:
   #     energy: total_energy
   heartbeat_interval: 60s            # pin Heartbeat (CSMSes often default to hours)
   meter_value_sample_interval: 30s   # pin MeterValueSampleInterval (≥30s for evcc)
+  stop_txn_sampled_data:             # measurands shipped only at StopTransaction
+    - Energy.Active.Import.Register  #   distinct from the periodic feed —
+    - SoC                            #   tighter list for billing transcripts
   meter_values:
     voltage: voltage_a_sensor        # → Voltage (V)
     current: current_a_sensor        # → Current.Import (A)
@@ -153,7 +156,15 @@ CSMS-side `ChangeConfiguration` writes.
 **Heartbeat enforcement.** Pinning `heartbeat_interval` re-applies the
 configured value every 5 s — covers the post-`BootNotification` window
 where some CSMSes (SteVe, evcc) reset HeartbeatInterval to their own
-default.
+default. Same pattern applies to `meter_value_sample_interval` and
+`stop_txn_sampled_data`.
+
+**RFID / LocalAuthList.** `id(ocpp_cp)->start_transaction(idTag)` and
+`id(ocpp_cp)->end_transaction_with_idtag(idTag)` drive the OCPP
+Authorize flow from a YAML lambda — wire them to your card-reader
+component. MicroOcpp auto-handles `SendLocalList` / `GetLocalListVersion`
+from the CSMS; with `MO_USE_FILEAPI=DISABLE_FS` (default) the list lives
+in RAM only and resets on every boot.
 
 **WebSocket keepalive.** Custom WS client with 20 s ping cadence and a
 60 s pong watchdog. Reconnects 5 s after any drop.
