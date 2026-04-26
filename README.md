@@ -4,14 +4,16 @@ On-device **OCPP 1.6J Charge Point** external component for [ESPHome](https://es
 built on top of [matth-x/MicroOcpp](https://github.com/matth-x/MicroOcpp).
 
 Lets any ESPHome-controlled EV charger register with a Central System (CSMS) —
-SteVe, CitrineOS, Monta, ev.energy, etc. — and expose itself as a standard
-OCPP Charge Point over WebSocket. No always-on Home Assistant needed.
+SteVe, CitrineOS, evcc, Monta, ev.energy, etc. — and expose itself as a standard
+OCPP Charge Point over WebSocket. No always-on Home Assistant needed for the
+OCPP link itself.
 
 ## Status
 
-Early development. First target: LibreTiny `bk72xx` (BK7231N) against a local
-SteVe instance. Should also compile on ESP32/ESP8266 since MicroOcpp supports
-those out of the box; untested.
+In production use against [evcc](https://evcc.io) on a Quectel FC41D
+(BK7231N) inside a reverse-engineered Rippleon ROC001 EV charger. Compiles
+under LibreTiny (`bk72xx`); should compile on ESP32/ESP8266 since MicroOcpp
+supports those upstream.
 
 ## Repository layout
 
@@ -40,28 +42,95 @@ external_components:
   - source:
       type: git
       url: https://github.com/RAR/esphome-ocpp-server
+      ref: main
+    refresh: always
     components: [ocpp]
 
 ocpp:
   id: ocpp_cp
-  csms_url: ws://192.168.1.10:8180/steve/websocket/CentralSystemService/my-charger
+  csms_url: ws://192.168.1.10:8887/my-charger
   charge_point_id: my-charger
   vendor: My Company
   model: My Charger Model
+  firmware_version: "1.0.0"
+  heartbeat_interval: 60s            # pin Heartbeat (CSMSes often default to hours)
   meter_values:
-    voltage: voltage_a_sensor
-    current: current_a_sensor
-    power: power_sensor
-    energy: session_energy_sensor
+    voltage: voltage_a_sensor        # → Voltage (V)
+    current: current_a_sensor        # → Current.Import (A)
+    power: power_sensor              # → Power.Active.Import (kW input → W)
+    energy: charge_energy_sensor     # → Energy.Active.Import.Register (kWh input → Wh)
+    current_offered: max_current_n   # number::Number → Current.Offered (A)
+                                     #   Power.Offered auto-computed from Voltage*Number
+    temperature: system_temp_sensor  # → Temperature, Location=Body
+    soc: ev_soc_sensor               # → SoC, Location=EV (HA-mirrored sensor)
+    frequency: grid_freq_sensor      # → Frequency (Hz, HA-mirrored)
+    power_factor: grid_pf_sensor     # → Power.Factor (HA-mirrored)
   status_from: status_text_sensor
-  on_remote_start:
+  status_mapping:                    # local-state → OCPP-status
+    "Not Connected": Available
+    "Ready to Charge": Preparing
+    "Charging": Charging
+    "Stopping": Finishing
+    "Complete": Finishing
+    "Fault": Faulted
+  plugged_from: plugged_binary       # authoritative cable-plug signal
+  soc_plugged_from: ev_connected_bs  # EV-identity gate for SoC (optional)
+  on_remote_start:                   # fires on real StartTx (not just request)
     - lambda: id(my_charger)->start();
-  on_remote_stop:
+  on_remote_stop:                    # fires on real StopTx
     - lambda: id(my_charger)->stop();
+  on_reset:
+    - lambda: id(my_charger)->reset();
+  on_charging_profile_change:        # SmartCharging effective limit
+    - lambda: |-
+        if (current_limit_a == 0.0f || power_limit_w == 0.0f) {
+          id(my_charger)->stop();
+        } else if (current_limit_a > 0.0f) {
+          // forward to charger's max-current control
+        }
+
+text_sensor:
+  - platform: ocpp
+    ocpp_id: ocpp_cp
+    connection_state:                # disconnected / connecting / handshaking
+      name: "OCPP State"             # / connected / ready / closing
 ```
 
-See [`example/`](example/) for complete configs, including the reference
-Rippleon ROC001 integration.
+See [`example/rippleon.yaml`](example/rippleon.yaml) for a complete
+production config including HA-mirrored measurands and SmartCharging
+hookup.
+
+## What it does
+
+**Connector / Transaction lifecycle.** Drives MicroOcpp's connector
+state machine from the bound `plugged` binary sensor and a status text
+sensor. `on_remote_start` / `on_remote_stop` triggers fire on real
+`StartTransaction` / `StopTransaction` events (not just request
+receipt), so they only run after MO has accepted the request and the
+connector is actually entering/leaving a transaction.
+
+**SmartCharging.** `on_charging_profile_change` fires whenever the
+CSMS-effective current/power limit changes. The component also detects
+profile-level disable (`SetChargingProfile{limit:0}`) at the
+request-parse layer and force-zeroes `Current.Offered` /
+`Power.Offered` until the CSMS lifts the disable — which is what evcc
+keys its `Enabled()` check off when status isn't `Charging` /
+`SuspendedEVSE`.
+
+**Dynamic `MeterValuesSampledData`.** The advertised measurand list is
+rebuilt every 5 s from currently-bound and currently-fresh sensors.
+HA-mirrored measurands drop out of MeterValues automatically when the
+underlying entity goes `unavailable`, when the ESPHome→HA API link is
+down, or (for `SoC`) when the EV-identity gate fails. Reasserts over
+CSMS-side `ChangeConfiguration` writes.
+
+**Heartbeat enforcement.** Pinning `heartbeat_interval` re-applies the
+configured value every 5 s — covers the post-`BootNotification` window
+where some CSMSes (SteVe, evcc) reset HeartbeatInterval to their own
+default.
+
+**WebSocket keepalive.** Custom WS client with 20 s ping cadence and a
+60 s pong watchdog. Reconnects 5 s after any drop.
 
 ## License
 
