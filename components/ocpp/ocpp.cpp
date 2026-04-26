@@ -467,13 +467,20 @@ void OcppCp::refresh_mvsd_() {
   last_mvsd_check_ms_ = now;
   auto mvsd = MicroOcpp::declareConfiguration<const char *>(
       "MeterValuesSampledData", "");
-  if (!mvsd) return;
+  if (!mvsd) {
+    ESP_LOGD(TAG, "MVSD slot unreachable");
+    return;
+  }
   std::string desired = build_mvsd_list_();
   // Compare to MO's actual stored value, not our last write — evcc / SteVe
   // can ChangeConfiguration MVSD between our refreshes (e.g. inject SoC),
   // and we need to overwrite that, not skip because our private last_mvsd_
   // shadow says we already set it to the same string.
   const char *cur = mvsd->getString();
+  // Always log at DEBUG so we can see whether MO's stored value diverges
+  // from what we want, even when no setString happens.
+  ESP_LOGD(TAG, "MVSD tick: cur=[%s] desired=[%s]",
+           cur ? cur : "(null)", desired.c_str());
   if (cur != nullptr && desired == cur) return;
   mvsd->setString(desired.c_str());
   ESP_LOGI(TAG, "MeterValuesSampledData: %s", desired.c_str());
