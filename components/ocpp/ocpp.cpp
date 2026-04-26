@@ -704,16 +704,106 @@ void OcppCp::dump_config() {
   ESP_LOGCONFIG(TAG, "OCPP Charge Point:");
   ESP_LOGCONFIG(TAG, "  CSMS URL: %s", csms_url_.c_str());
   ESP_LOGCONFIG(TAG, "  Charge Point ID: %s", cp_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Vendor/Model: %s / %s", vendor_.c_str(), model_.c_str());
+  ESP_LOGCONFIG(TAG, "  Vendor/Model: %s / %s", vendor_.c_str(),
+                model_.c_str());
   if (!firmware_version_.empty())
     ESP_LOGCONFIG(TAG, "  Firmware Version: %s", firmware_version_.c_str());
-  ESP_LOGCONFIG(TAG, "  Meter inputs: %s%s%s%s",
-                meter_sensors_.count(MeterValueField::VOLTAGE) ? "V " : "",
-                meter_sensors_.count(MeterValueField::CURRENT) ? "I " : "",
-                meter_sensors_.count(MeterValueField::POWER) ? "P " : "",
-                meter_sensors_.count(MeterValueField::ENERGY) ? "E" : "");
+
+  ESP_LOGCONFIG(TAG, "  Region:");
+  ESP_LOGCONFIG(TAG, "    Nominal Voltage: %.1f V", nominal_voltage_);
+  if (!phase_tags_.empty()) {
+    std::string tags;
+    for (size_t i = 0; i < phase_tags_.size(); ++i) {
+      if (i) tags += ",";
+      tags += phase_tags_[i];
+    }
+    ESP_LOGCONFIG(TAG, "    Phases: [%s] (3-phase mode)", tags.c_str());
+  } else if (!phase_.empty()) {
+    ESP_LOGCONFIG(TAG, "    Phase tag: %s (single-phase)", phase_.c_str());
+  } else {
+    ESP_LOGCONFIG(TAG, "    Phase tag: <none> (untagged single-phase)");
+  }
+  ESP_LOGCONFIG(TAG, "    1p/3p switchable: %s",
+                phase_switching_supported_ ? "yes" : "no");
+
+  // Meter input report. Show each measurand with its bound source — scalar
+  // sensor name, or per-leg list for 3-phase voltage/current.
+  ESP_LOGCONFIG(TAG, "  Meter inputs:");
+  auto report_axis = [this](MeterValueField f, const char *label) {
+    auto pit = meter_sensors_phase_.find(f);
+    if (!phase_tags_.empty() && pit != meter_sensors_phase_.end()) {
+      for (size_t leg = 0; leg < phase_tags_.size() && leg < 3; ++leg) {
+        auto *s = pit->second[leg];
+        if (s != nullptr)
+          ESP_LOGCONFIG(TAG, "    %s.%s: %s", label,
+                        phase_tags_[leg].c_str(), s->get_name().c_str());
+      }
+      return;
+    }
+    auto it = meter_sensors_.find(f);
+    if (it != meter_sensors_.end() && it->second != nullptr)
+      ESP_LOGCONFIG(TAG, "    %s: %s", label, it->second->get_name().c_str());
+  };
+  report_axis(MeterValueField::VOLTAGE, "Voltage");
+  report_axis(MeterValueField::CURRENT, "Current.Import");
+  auto report_scalar = [this](MeterValueField f, const char *label) {
+    auto it = meter_sensors_.find(f);
+    if (it != meter_sensors_.end() && it->second != nullptr)
+      ESP_LOGCONFIG(TAG, "    %s: %s", label, it->second->get_name().c_str());
+  };
+  report_scalar(MeterValueField::POWER, "Power.Active.Import");
+  report_scalar(MeterValueField::ENERGY, "Energy.Active.Import.Register");
+  report_scalar(MeterValueField::TEMPERATURE, "Temperature");
+  report_scalar(MeterValueField::SOC, "SoC");
+  report_scalar(MeterValueField::FREQUENCY, "Frequency");
+  report_scalar(MeterValueField::POWER_FACTOR, "Power.Factor");
+  if (current_offered_number_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "    Current.Offered: %s",
+                  current_offered_number_->get_name().c_str());
+    ESP_LOGCONFIG(TAG, "    Power.Offered: computed (Current.Offered × V)");
+    ESP_LOGCONFIG(TAG, "      Lock during transaction: %s",
+                  lock_offered_current_during_transaction_ ? "yes" : "no");
+  }
+
+  // Connector inputs.
+  ESP_LOGCONFIG(TAG, "  Connector inputs:");
   if (status_sensor_ != nullptr)
-    ESP_LOGCONFIG(TAG, "  Status source: bound");
+    ESP_LOGCONFIG(TAG, "    Status text_sensor: %s",
+                  status_sensor_->get_name().c_str());
+  if (plugged_sensor_ != nullptr)
+    ESP_LOGCONFIG(TAG, "    Plugged binary_sensor: %s",
+                  plugged_sensor_->get_name().c_str());
+  if (soc_plugged_sensor_ != nullptr)
+    ESP_LOGCONFIG(TAG, "    SoC-plugged gate: %s",
+                  soc_plugged_sensor_->get_name().c_str());
+  if (!status_mapping_.empty()) {
+    ESP_LOGCONFIG(TAG, "    Status mapping:");
+    for (auto &kv : status_mapping_)
+      ESP_LOGCONFIG(TAG, "      %s -> %s", kv.first.c_str(),
+                    kv.second.c_str());
+  }
+
+  // Diagnostic outputs.
+  ESP_LOGCONFIG(TAG, "  Outputs:");
+  if (connection_state_sensor_ != nullptr)
+    ESP_LOGCONFIG(TAG, "    Connection state text_sensor: %s",
+                  connection_state_sensor_->get_name().c_str());
+  if (heartbeat_interval_s_ > 0)
+    ESP_LOGCONFIG(TAG, "    Heartbeat interval: %d s", heartbeat_interval_s_);
+  else
+    ESP_LOGCONFIG(TAG, "    Heartbeat interval: <CSMS-decided>");
+
+  // Automation hookup counts.
+  ESP_LOGCONFIG(TAG, "  Automations bound:");
+  ESP_LOGCONFIG(TAG, "    on_remote_start: %u",
+                (unsigned) remote_start_callbacks_.size());
+  ESP_LOGCONFIG(TAG, "    on_remote_stop: %u",
+                (unsigned) remote_stop_callbacks_.size());
+  ESP_LOGCONFIG(TAG, "    on_reset: %u", (unsigned) reset_callbacks_.size());
+  ESP_LOGCONFIG(TAG, "    on_unlock_connector: %u",
+                (unsigned) unlock_callbacks_.size());
+  ESP_LOGCONFIG(TAG, "    on_charging_profile_change: %u",
+                (unsigned) charging_profile_callbacks_.size());
 }
 
 }  // namespace ocpp
