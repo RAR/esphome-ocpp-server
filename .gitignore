@@ -7,3 +7,6 @@ build/
 .esphome/
 *.swp
 server/.data/
+
+# CI smoke-test stub secrets — workflow writes this fresh on every run.
+tests/secrets.yaml

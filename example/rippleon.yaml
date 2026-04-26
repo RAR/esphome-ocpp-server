@@ -29,13 +29,20 @@ uart:
   baud_rate: 115200
 
 external_components:
+  # rippleon-side AT emulator + protocol layer live in a sibling repo.
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/RAR/esphome-rippleon-ev
+      ref: main
+    refresh: always
     components: [rippleon_at, rippleon_charger]
+  # OCPP component — this repo. Pin to `main` here; users tracking a
+  # specific commit should pin a SHA instead.
   - source:
-      type: local
-      path: ../esphome-ocpp-server/components
+      type: git
+      url: https://github.com/RAR/esphome-ocpp-server
+      ref: main
+    refresh: always
     components: [ocpp]
 
 rippleon_at:

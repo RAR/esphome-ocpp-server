@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  esphome-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Run every YAML in tests/ so a new schema variant just drops a
+        # file and gets exercised automatically. Single-phase covers
+        # every standard knob; 3phase covers the polymorphic
+        # voltage/current dict + phases list.
+        config:
+          - tests/compile_test.yaml
+          - tests/compile_test_3phase.yaml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The compile pulls a sibling repo via external_components for the
+      # 1-phase test (rippleon_at + rippleon_charger from RAR/esphome-rippleon-ev).
+      # Cache the ESPHome PIO state so successive runs aren't re-downloading
+      # the BK7231N toolchain + MicroOcpp every push.
+      - name: Cache PlatformIO + ESPHome
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+          key: esphome-${{ runner.os }}-${{ hashFiles('components/**/*.py', 'components/**/*.cpp', 'components/**/*.h', 'tests/*.yaml') }}
+          restore-keys: |
+            esphome-${{ runner.os }}-
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      # Stub secrets so the compile resolves !secret references. CI never
+      # connects anywhere — these values are only used to satisfy YAML
+      # validation. Same file shared by all matrix entries.
+      - name: Write stub secrets
+        run: |
+          cat > tests/secrets.yaml <<'EOF'
+          wifi_ssid: ci-stub
+          wifi_password: ci-stub-password
+          ocpp_csms_url: ws://ci-stub.invalid/test
+          ocpp_charge_point_id: ci-stub
+          EOF
+
+      - name: esphome compile ${{ matrix.config }}
+        run: esphome compile ${{ matrix.config }}

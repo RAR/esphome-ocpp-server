@@ -1,0 +1,168 @@
+# CI compile test for the ocpp component.
+#
+# Tests the *current checkout* of the OCPP component (via local path)
+# combined with the latest main of the rippleon-side components. The
+# user-facing example/rippleon.yaml uses git refs for both — it models
+# what consumers would write. This file deliberately diverges so PRs
+# get tested against the changes in the PR rather than against main.
+#
+# Stub secrets live in tests/secrets.yaml (gitignored locally; CI writes
+# its own copy at workflow time).
+
+substitutions:
+  device_name: rippleon-ci
+  friendly_name: Rippleon CI
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.f_cpu: 120000000L
+    board_build.bkcrypt_coeffs: "00000000000000000000000000000000"
+
+bk72xx:
+  board: generic-bk7231n-qfn32-tuya
+
+logger:
+  level: DEBUG
+
+uart:
+  id: mcu_uart
+  tx_pin: P11
+  rx_pin: P10
+  baud_rate: 115200
+
+external_components:
+  # OCPP component under test — local checkout (`../components` from this
+  # tests/ subdir).
+  - source:
+      type: local
+      path: ../components
+    components: [ocpp]
+  # rippleon-side components from main; we're not testing those here.
+  - source:
+      type: git
+      url: https://github.com/RAR/esphome-rippleon-ev
+      ref: main
+    refresh: always
+    components: [rippleon_at, rippleon_charger]
+
+rippleon_at:
+  id: rippleon_mcu
+  uart_id: mcu_uart
+
+rippleon_charger:
+  id: rippleon_proto
+  rippleon_at_id: rippleon_mcu
+  auto_connect: true
+
+# Sensors — minimum bindings the OCPP component needs for its meter
+# inputs to register. Only voltage/current/power/energy are mandatory;
+# the optional measurands (temperature/soc/frequency/power_factor) are
+# exercised explicitly to catch schema regressions.
+sensor:
+  - platform: rippleon_charger
+    voltage_a: {id: rippleon_voltage, name: "Voltage"}
+    current_a: {id: rippleon_current, name: "Current"}
+    power: {id: rippleon_power, name: "Power"}
+    charge_energy: {id: rippleon_charge_energy, name: "Session Energy"}
+    system_temp: {id: rippleon_system_temp, name: "System Temp"}
+  - platform: template
+    name: "Stub Frequency"
+    id: stub_frequency
+    lambda: |-
+      return 60.0;
+    update_interval: 60s
+  - platform: template
+    name: "Stub SoC"
+    id: stub_soc
+    lambda: |-
+      return 50.0;
+    update_interval: 60s
+  - platform: template
+    name: "Stub PF"
+    id: stub_pf
+    lambda: |-
+      return 1.0;
+    update_interval: 60s
+
+binary_sensor:
+  - platform: rippleon_charger
+    plugged: {id: rippleon_plugged, name: "Plugged"}
+  - platform: template
+    name: "Stub R1T Connected"
+    id: stub_r1t_connected
+    lambda: |-
+      return false;
+
+text_sensor:
+  - platform: rippleon_charger
+    state: {name: "State"}
+    fault: {name: "Fault"}
+    serial: {name: "Serial"}
+    status: {id: rippleon_status, name: "Status"}
+  - platform: ocpp
+    ocpp_id: ocpp_cp
+    connection_state: {name: "OCPP State"}
+
+number:
+  - platform: rippleon_charger
+    max_current: {id: rippleon_max_current, name: "Max Charge Current"}
+
+api:
+ota:
+  - platform: esphome
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${device_name}-ap
+
+# Single-phase OCPP CP — exercises every YAML key the component supports
+# so a schema regression breaks CI immediately.
+ocpp:
+  id: ocpp_cp
+  csms_url: !secret ocpp_csms_url
+  charge_point_id: !secret ocpp_charge_point_id
+  vendor: Rippleon
+  model: ROC001
+  phase: L1
+  nominal_voltage: 240.0
+  phase_switching_supported: false
+  lock_offered_current_during_transaction: true
+  heartbeat_interval: 30s
+  meter_value_sample_interval: 30s
+  stop_txn_sampled_data:
+    - Energy.Active.Import.Register
+    - SoC
+  meter_values:
+    voltage: rippleon_voltage
+    current: rippleon_current
+    power: rippleon_power
+    energy: rippleon_charge_energy
+    current_offered: rippleon_max_current
+    temperature: rippleon_system_temp
+    frequency: stub_frequency
+    soc: stub_soc
+    power_factor: stub_pf
+  status_from: rippleon_status
+  plugged_from: rippleon_plugged
+  soc_plugged_from: stub_r1t_connected
+  status_mapping:
+    "Not Connected": Available
+    "Ready to Charge": Preparing
+    "Charging": Charging
+    "Complete": Finishing
+    "Fault": Faulted
+  on_remote_start:
+    - lambda: 'ESP_LOGI("ci", "remote start id=%s", id_tag.c_str());'
+  on_remote_stop:
+    - lambda: 'ESP_LOGI("ci", "remote stop tx=%d", transaction_id);'
+  on_reset:
+    - lambda: 'ESP_LOGI("ci", "reset type=%s", type.c_str());'
+  on_charging_profile_change:
+    - lambda: 'ESP_LOGI("ci", "profile %.1fA %.1fW %dp", current_limit_a, power_limit_w, n_phases);'
+  on_trigger_message:
+    - lambda: 'ESP_LOGI("ci", "trigger %s connector=%d", requested_message.c_str(), connector_id);'
+  on_data_transfer:
+    - lambda: 'ESP_LOGI("ci", "datatransfer %s/%s", vendor_id.c_str(), message_id.c_str());'
