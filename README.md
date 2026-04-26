@@ -53,6 +53,9 @@ ocpp:
   vendor: My Company
   model: My Charger Model
   firmware_version: "1.0.0"
+  phase: L1                          # OCPP phase tag for V/I (single-phase: L1)
+  nominal_voltage: 240.0             # 120 US outlet / 230 EU 1ϕ / 240 US split / 400 EU 3ϕ L-L
+  phase_switching_supported: false   # true only for EU 3-phase 1p3p switchable EVSEs
   heartbeat_interval: 60s            # pin Heartbeat (CSMSes often default to hours)
   meter_values:
     voltage: voltage_a_sensor        # → Voltage (V)

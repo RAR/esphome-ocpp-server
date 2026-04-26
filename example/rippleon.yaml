@@ -174,6 +174,14 @@ ocpp:
   charge_point_id: !secret ocpp_charge_point_id
   vendor: Rippleon
   model: ROC001
+  # Single-phase EVSE — tag V/I as L1 so evcc's PhaseCurrents/PhaseVoltages
+  # getters resolve. nominal_voltage is the regional line voltage used as
+  # the Power.Offered fallback (120 US outlet / 230 EU 1ϕ / 240 US split /
+  # 400 EU 3ϕ L-L). phase_switching_supported=false suppresses evcc's
+  # "Phase switch: yes" UI heuristic for non-1p3p hardware.
+  phase: L1
+  nominal_voltage: 240.0
+  phase_switching_supported: false
   meter_values:
     voltage: rippleon_voltage
     current: rippleon_current
