@@ -65,6 +65,7 @@ CONF_CHARGE_POINT_ID = "charge_point_id"
 CONF_VENDOR = "vendor"
 CONF_MODEL = "model"
 CONF_FIRMWARE_VERSION = "firmware_version"
+CONF_PHASE = "phase"
 CONF_METER_VALUES = "meter_values"
 CONF_STATUS_FROM = "status_from"
 CONF_STATUS_MAPPING = "status_mapping"
@@ -101,6 +102,16 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_VENDOR, default="ESPHome"): cv.string_strict,
         cv.Optional(CONF_MODEL, default="OCPP Charger"): cv.string_strict,
         cv.Optional(CONF_FIRMWARE_VERSION, default=""): cv.string_strict,
+        # OCPP phase tag for Voltage / Current.Import measurands. evcc's
+        # PhaseCurrents/PhaseVoltages interfaces only resolve when the
+        # SampledValue carries `phase: L1|L2|L3` — without it those rows go
+        # into evcc's generic measurement map and per-phase displays stay 0.
+        # Single-phase EVSEs typically set this to "L1"; three-phase EVSEs
+        # would need three separate addMeterValueInput calls (not yet
+        # supported here).
+        cv.Optional(CONF_PHASE): cv.one_of(
+            "L1", "L2", "L3", "L1-N", "L2-N", "L3-N", upper=True
+        ),
         cv.Optional(CONF_METER_VALUES): METER_VALUES_SCHEMA,
         cv.Optional(CONF_STATUS_FROM): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_STATUS_MAPPING, default={}): cv.Schema(
@@ -158,6 +169,9 @@ async def to_code(config):
     cg.add(var.set_model(config[CONF_MODEL]))
     if config[CONF_FIRMWARE_VERSION]:
         cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
+
+    if CONF_PHASE in config:
+        cg.add(var.set_phase(config[CONF_PHASE]))
 
     if CONF_METER_VALUES in config:
         for key, enum_val in _FIELDS.items():

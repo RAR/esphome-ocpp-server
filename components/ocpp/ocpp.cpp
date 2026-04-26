@@ -88,18 +88,22 @@ void OcppCp::register_callbacks_() {
     });
   }
 
+  // phase_.c_str() returns "" for unset; addMeterValueInput treats nullptr
+  // and "" the same per MO source, but we pass nullptr explicitly when
+  // unset for clarity.
+  const char *phase_tag = phase_.empty() ? nullptr : phase_.c_str();
   auto volt_it = meter_sensors_.find(MeterValueField::VOLTAGE);
   if (volt_it != meter_sensors_.end() && volt_it->second != nullptr) {
     auto *s = volt_it->second;
     addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
-                       "Voltage", "V");
+                       "Voltage", "V", nullptr, phase_tag);
   }
 
   auto curr_it = meter_sensors_.find(MeterValueField::CURRENT);
   if (curr_it != meter_sensors_.end() && curr_it->second != nullptr) {
     auto *s = curr_it->second;
     addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
-                       "Current.Import", "A");
+                       "Current.Import", "A", nullptr, phase_tag);
   }
 
   // Current.Offered / Power.Offered. evcc requests both when configured with

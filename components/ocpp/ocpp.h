@@ -47,6 +47,7 @@ class OcppCp : public Component {
   void set_vendor(const std::string &v) { vendor_ = v; }
   void set_model(const std::string &m) { model_ = m; }
   void set_firmware_version(const std::string &v) { firmware_version_ = v; }
+  void set_phase(const std::string &p) { phase_ = p; }
 
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
@@ -114,6 +115,11 @@ class OcppCp : public Component {
   std::string vendor_;
   std::string model_;
   std::string firmware_version_;
+  // Optional phase tag (e.g. "L1") attached to Voltage and Current.Import
+  // measurands so evcc's PhaseCurrents / PhaseVoltages getters resolve them
+  // — getPhaseKey() in evcc's connector.go expects "<measurand>.L<n>" rows.
+  // Empty = no phase attribute, current behavior.
+  std::string phase_;
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
   text_sensor::TextSensor *status_sensor_{nullptr};
