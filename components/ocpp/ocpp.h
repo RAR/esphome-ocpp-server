@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
 
+#include <array>
 #include <functional>
 #include <map>
 #include <string>
@@ -63,6 +64,16 @@ class OcppCp : public Component {
   void set_phase_switching_supported(bool b) { phase_switching_supported_ = b; }
 
   void set_meter_value_sensor(MeterValueField f, sensor::Sensor *s) { meter_sensors_[f] = s; }
+  // 3-phase mode: per-leg sensors keyed by (measurand, leg-index 0..2).
+  // Only Voltage and Current.Import are split per-leg; Power / Energy stay
+  // scalar (OCPP 1.6 measurands are already cross-phase totals). Pairs
+  // with the phase_tags_ vector at register_callbacks_ time.
+  void set_meter_value_sensor_phase(MeterValueField f, int leg,
+                                    sensor::Sensor *s) {
+    if (leg < 0 || leg > 2) return;
+    meter_sensors_phase_[f][leg] = s;
+  }
+  void add_phase_tag(const std::string &tag) { phase_tags_.push_back(tag); }
   void set_status_text_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
   void add_status_mapping(const std::string &from, const std::string &to) { status_mapping_[from] = to; }
   void set_plugged_binary_sensor(binary_sensor::BinarySensor *s) { plugged_sensor_ = s; }
@@ -137,6 +148,14 @@ class OcppCp : public Component {
   bool phase_switching_supported_{false};
 
   std::map<MeterValueField, sensor::Sensor *> meter_sensors_;
+  // Per-phase voltage/current sensors. Outer key is the measurand
+  // (Voltage / Current.Import); inner array indexes legs 0..2 corresponding
+  // to phase_tags_[0..2]. Empty when single-phase mode is in effect.
+  std::map<MeterValueField, std::array<sensor::Sensor *, 3>> meter_sensors_phase_;
+  // Phase tags for 3-phase mode. Order pairs 1:1 with the legs configured
+  // above. Empty when single-phase mode is in effect (the scalar `phase_`
+  // field carries the single tag instead).
+  std::vector<std::string> phase_tags_;
   text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *connection_state_sensor_{nullptr};
   std::string last_connection_state_;

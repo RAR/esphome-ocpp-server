@@ -66,6 +66,10 @@ CONF_VENDOR = "vendor"
 CONF_MODEL = "model"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_PHASE = "phase"
+CONF_PHASES = "phases"
+CONF_L1 = "l1"
+CONF_L2 = "l2"
+CONF_L3 = "l3"
 CONF_NOMINAL_VOLTAGE = "nominal_voltage"
 CONF_PHASE_SWITCHING_SUPPORTED = "phase_switching_supported"
 CONF_METER_VALUES = "meter_values"
@@ -88,9 +92,40 @@ CONF_CURRENT_OFFERED = "current_offered"
 # evcc / OCPP CSMSes commonly want as `Current.Offered` in MeterValues. Power
 # Offered is auto-computed from current_offered × voltage when both are bound;
 # we don't expose a separate `power_offered` slot.
+#
+# `voltage` and `current` accept either a single sensor (single-phase EVSE)
+# OR a `{l1, l2, l3}` dict (3-phase EVSE — each leg becomes a separately
+# tagged addMeterValueInput call so evcc's PhaseCurrents/PhaseVoltages
+# getters resolve "<measurand>.L<n>" rows for each leg). Other measurands
+# stay scalar — Power.Active.Import / Energy.Active.Import.Register are
+# already sums in the OCPP 1.6 measurand semantics.
+PHASE_DICT_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_L1): cv.use_id(sensor.Sensor),
+        cv.Required(CONF_L2): cv.use_id(sensor.Sensor),
+        cv.Required(CONF_L3): cv.use_id(sensor.Sensor),
+    }
+)
+
+
+def _voltage_or_current(value):
+    # Polymorphic validator: accept either a single sensor ID (legacy
+    # single-phase) or a {l1,l2,l3} dict (3-phase). Dict beats id-string in
+    # cv ambiguity: cv.use_id always wins on a string, dict_form must be
+    # tried first. ESPHome's id parser doesn't accept dicts so this is
+    # unambiguous in practice.
+    if isinstance(value, dict):
+        return PHASE_DICT_SCHEMA(value)
+    return cv.use_id(sensor.Sensor)(value)
+
+
+_SCALAR_FIELDS = {k: v for k, v in _FIELDS.items() if k not in ("voltage", "current")}
+
 METER_VALUES_SCHEMA = cv.Schema(
     {
-        **{cv.Optional(key): cv.use_id(sensor.Sensor) for key in _FIELDS},
+        cv.Optional("voltage"): _voltage_or_current,
+        cv.Optional("current"): _voltage_or_current,
+        **{cv.Optional(key): cv.use_id(sensor.Sensor) for key in _SCALAR_FIELDS},
         cv.Optional(CONF_CURRENT_OFFERED): cv.use_id(number.Number),
     }
 )
@@ -113,6 +148,21 @@ CONFIG_SCHEMA = cv.Schema(
         # supported here).
         cv.Optional(CONF_PHASE): cv.one_of(
             "L1", "L2", "L3", "L1-N", "L2-N", "L3-N", upper=True
+        ),
+        # 3-phase opt-in. Presence of a `phases:` list switches the
+        # component into multi-leg mode: voltage / current under
+        # meter_values become {l1,l2,l3} dicts, and each phase tag listed
+        # here is paired with the matching leg's sensor on a separate
+        # addMeterValueInput call. Order matters: phases[0] tags l1,
+        # phases[1] tags l2, phases[2] tags l3. Single-phase YAML keeps
+        # using the scalar `phase:` key — the two are mutually exclusive
+        # but we don't enforce that here; whichever fires first in
+        # to_code wins (phases takes precedence below).
+        cv.Optional(CONF_PHASES): cv.All(
+            cv.ensure_list(
+                cv.one_of("L1", "L2", "L3", "L1-N", "L2-N", "L3-N", upper=True)
+            ),
+            cv.Length(min=2, max=3),
         ),
         # Country / regional knobs. nominal_voltage is the EVSE's expected
         # line voltage — US split-phase 240, US outlet 120, EU single-phase
@@ -185,17 +235,32 @@ async def to_code(config):
 
     if CONF_PHASE in config:
         cg.add(var.set_phase(config[CONF_PHASE]))
+    if CONF_PHASES in config:
+        for tag in config[CONF_PHASES]:
+            cg.add(var.add_phase_tag(tag))
 
     cg.add(var.set_nominal_voltage(config[CONF_NOMINAL_VOLTAGE]))
     cg.add(var.set_phase_switching_supported(config[CONF_PHASE_SWITCHING_SUPPORTED]))
 
     if CONF_METER_VALUES in config:
+        mv = config[CONF_METER_VALUES]
         for key, enum_val in _FIELDS.items():
-            if key in config[CONF_METER_VALUES]:
-                s = await cg.get_variable(config[CONF_METER_VALUES][key])
+            if key not in mv:
+                continue
+            val = mv[key]
+            if isinstance(val, dict):
+                # Per-phase voltage/current. The C++ side stores up to three
+                # sensors per measurand; tag/leg pairing is done via the
+                # phases list at register_callbacks_ time.
+                for leg, leg_key in enumerate((CONF_L1, CONF_L2, CONF_L3)):
+                    if leg_key in val:
+                        s = await cg.get_variable(val[leg_key])
+                        cg.add(var.set_meter_value_sensor_phase(enum_val, leg, s))
+            else:
+                s = await cg.get_variable(val)
                 cg.add(var.set_meter_value_sensor(enum_val, s))
-        if CONF_CURRENT_OFFERED in config[CONF_METER_VALUES]:
-            n = await cg.get_variable(config[CONF_METER_VALUES][CONF_CURRENT_OFFERED])
+        if CONF_CURRENT_OFFERED in mv:
+            n = await cg.get_variable(mv[CONF_CURRENT_OFFERED])
             cg.add(var.set_current_offered_number(n))
 
     if CONF_STATUS_FROM in config:

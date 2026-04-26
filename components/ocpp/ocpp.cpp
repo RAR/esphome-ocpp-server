@@ -105,19 +105,40 @@ void OcppCp::register_callbacks_() {
   // and "" the same per MO source, but we pass nullptr explicitly when
   // unset for clarity.
   const char *phase_tag = phase_.empty() ? nullptr : phase_.c_str();
-  auto volt_it = meter_sensors_.find(MeterValueField::VOLTAGE);
-  if (volt_it != meter_sensors_.end() && volt_it->second != nullptr) {
-    auto *s = volt_it->second;
-    addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
-                       "Voltage", "V", nullptr, phase_tag);
-  }
-
-  auto curr_it = meter_sensors_.find(MeterValueField::CURRENT);
-  if (curr_it != meter_sensors_.end() && curr_it->second != nullptr) {
-    auto *s = curr_it->second;
-    addMeterValueInput([s]() -> float { return s->has_state() ? s->state : 0.0f; },
-                       "Current.Import", "A", nullptr, phase_tag);
-  }
+  // Voltage and Current.Import each support two registration paths:
+  //   1) 3-phase mode — meter_sensors_phase_[F] has per-leg sensors paired
+  //      with phase_tags_. Emit one addMeterValueInput per leg, each
+  //      tagged "L1"/"L2"/"L3" so evcc's getPhaseKey() resolves
+  //      Voltage.L1, Voltage.L2, Voltage.L3 (same for Current.Import).
+  //   2) single-phase mode — fall back to the scalar meter_sensors_ slot
+  //      tagged with the lone phase_ string (or nullptr if unset).
+  // 3-phase mode is detected by a non-empty phase_tags_; legs without a
+  // bound sensor are silently skipped.
+  auto register_axis = [this, phase_tag](MeterValueField f,
+                                         const char *measurand,
+                                         const char *unit) {
+    auto pit = meter_sensors_phase_.find(f);
+    if (!phase_tags_.empty() && pit != meter_sensors_phase_.end()) {
+      for (size_t leg = 0; leg < phase_tags_.size() && leg < 3; ++leg) {
+        auto *s = pit->second[leg];
+        if (s == nullptr) continue;
+        const char *tag = phase_tags_[leg].c_str();
+        addMeterValueInput(
+            [s]() -> float { return s->has_state() ? s->state : 0.0f; },
+            measurand, unit, nullptr, tag);
+      }
+      return;
+    }
+    auto it = meter_sensors_.find(f);
+    if (it != meter_sensors_.end() && it->second != nullptr) {
+      auto *s = it->second;
+      addMeterValueInput(
+          [s]() -> float { return s->has_state() ? s->state : 0.0f; },
+          measurand, unit, nullptr, phase_tag);
+    }
+  };
+  register_axis(MeterValueField::VOLTAGE, "Voltage", "V");
+  register_axis(MeterValueField::CURRENT, "Current.Import", "A");
 
   // Current.Offered / Power.Offered. evcc requests both when configured with
   // remotestart + currentLimit so it can reflect the EVSE-offered cap in its
@@ -165,22 +186,45 @@ void OcppCp::register_callbacks_() {
           return std::isnan(n->state) ? 0.0f : n->state;
         },
         "Current.Offered", "A");
-    // Power.Offered = Current.Offered × voltage. Prefer the live voltage
-    // sensor if bound (tracks mains conditions); otherwise fall back to
-    // nominal_voltage so we still publish a useful value on EVSEs that
-    // don't measure Vrms. Country knob: 230 EU, 240 US split-phase, 120
-    // US outlet, 400 EU 3-phase line-to-line.
+    // Power.Offered = Current.Offered × voltage × n_phases. The J1772 PWM
+    // (and IEC 61851 Type 2) advertises a per-phase current cap; with N
+    // legs each carrying that current at their per-leg voltage, the
+    // installed-power offer is the sum across legs. Country knob:
+    // 230 EU, 240 US split-phase, 120 US outlet, 400 EU 3-phase line-to-line.
+    //   single-phase scalar sensor → V × I
+    //   3-phase per-leg sensors    → (V_l1 + V_l2 + V_l3) × I (legs that
+    //                                aren't reporting fall back to
+    //                                nominal_voltage individually)
+    //   no sensor bound at all     → nominal_voltage × I × max(1, n_legs)
     auto volt_it2 = meter_sensors_.find(MeterValueField::VOLTAGE);
-    sensor::Sensor *v = (volt_it2 != meter_sensors_.end()) ? volt_it2->second
-                                                           : nullptr;
+    sensor::Sensor *v_scalar =
+        (volt_it2 != meter_sensors_.end()) ? volt_it2->second : nullptr;
+    auto volt_pit = meter_sensors_phase_.find(MeterValueField::VOLTAGE);
+    bool three_phase = !phase_tags_.empty();
+    std::array<sensor::Sensor *, 3> v_legs = {nullptr, nullptr, nullptr};
+    if (three_phase && volt_pit != meter_sensors_phase_.end()) {
+      v_legs = volt_pit->second;
+    }
+    int n_legs = three_phase ? static_cast<int>(phase_tags_.size()) : 1;
     addMeterValueInput(
-        [this, n, v]() -> float {
+        [this, n, v_scalar, v_legs, three_phase, n_legs]() -> float {
           if (csms_disabled_) return 0.0f;
           float i = std::isnan(n->state) ? 0.0f : n->state;
-          float vv = (v != nullptr && v->has_state() && !std::isnan(v->state))
-                         ? v->state
-                         : nominal_voltage_;
-          return i * vv;
+          float vsum = 0.0f;
+          if (three_phase) {
+            for (int leg = 0; leg < n_legs; ++leg) {
+              auto *vs = v_legs[leg];
+              vsum += (vs != nullptr && vs->has_state() && !std::isnan(vs->state))
+                          ? vs->state
+                          : nominal_voltage_;
+            }
+          } else {
+            vsum = (v_scalar != nullptr && v_scalar->has_state() &&
+                    !std::isnan(v_scalar->state))
+                       ? v_scalar->state
+                       : nominal_voltage_;
+          }
+          return i * vsum;
         },
         "Power.Offered", "W");
   }
@@ -438,8 +482,15 @@ std::string OcppCp::build_mvsd_list_() const {
   // Mandatory base — these always fit (102 chars).
   add_if(true, "Energy.Active.Import.Register");
   add_if(true, "Power.Active.Import");
-  add_if(meter_sensors_.count(MeterValueField::VOLTAGE) > 0, "Voltage");
-  add_if(meter_sensors_.count(MeterValueField::CURRENT) > 0, "Current.Import");
+  // The per-row phase tag handles which leg each sample belongs to, so
+  // the measurand string is "Voltage" / "Current.Import" once regardless
+  // of single- vs 3-phase mode.
+  add_if(meter_sensors_.count(MeterValueField::VOLTAGE) > 0 ||
+             meter_sensors_phase_.count(MeterValueField::VOLTAGE) > 0,
+         "Voltage");
+  add_if(meter_sensors_.count(MeterValueField::CURRENT) > 0 ||
+             meter_sensors_phase_.count(MeterValueField::CURRENT) > 0,
+         "Current.Import");
   // Current/Power.Offered come from the user-bound Number. Drop them while
   // CSMS has imposed a 0-limit profile (see csms_disabled_) — otherwise
   // they'd swing between 0 and the Number value depending on the CSMS state,
