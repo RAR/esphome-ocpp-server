@@ -10,10 +10,29 @@ OCPP link itself.
 
 ## Status
 
-In production use against [evcc](https://evcc.io) on a Quectel FC41D
-(BK7231N) inside a reverse-engineered Rippleon ROC001 EV charger. Compiles
-under LibreTiny (`bk72xx`); should compile on ESP32/ESP8266 since MicroOcpp
-supports those upstream.
+**Working but not in active use.** Tested end-to-end against
+[evcc](https://evcc.io) and SteVe on a Quectel FC41D (BK7231N) inside a
+reverse-engineered Rippleon ROC001 EV charger. BootNotification,
+Heartbeat, MeterValues, StartTransaction / StopTransaction (incl. RFID
+`idTag` flow), ChangeConfiguration, TriggerMessage, and RemoteStop /
+RemoteStart all exercised on hardware and round-tripped successfully
+with the CSMS.
+
+The Rippleon deployment moved off OCPP and onto a Home Assistant ↔ evcc
+integration instead — the Rippleon MCU's *own* OCPP code (the bit we
+don't replace) has too many bugs to make the OCPP path the path of
+least resistance for that charger; see the
+[esphome-rippleon-ev README](https://github.com/RAR/esphome-rippleon-ev#a-word-on-the-mcus-ocpp-implementation)
+for the full list. None of those issues are this component's fault — it
+correctly speaks OCPP 1.6J on its side.
+
+That means this repo is no longer being exercised on a daily basis.
+It compiles cleanly (CI runs `esphome compile` on every push) and the
+last bench run was successful, but if you hit a regression please file
+an issue rather than assume someone else is already on it. PRs welcome.
+
+Compiles under LibreTiny (`bk72xx`); should compile on ESP32 / ESP8266
+since MicroOcpp supports those upstream.
 
 ## Repository layout
 
