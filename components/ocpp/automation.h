@@ -6,6 +6,54 @@
 namespace esphome {
 namespace ocpp {
 
+// ===== Actions (YAML-callable) =====
+
+// `ocpp.start_transaction` — begin a charging transaction with the
+// given idTag. Mirrors RFID-swipe behaviour locally without needing
+// a real card. Use case: a user-toggleable "no auth required"
+// switch fires this from an automation when the EVSE enters the
+// charging J1772 state, so the CSMS sees a proper StartTransaction.req
+// rather than a status flip with no transaction record (which evcc
+// interprets as "still waiting on auth").
+template<typename... Ts>
+class StartTransactionAction : public Action<Ts...> {
+ public:
+  explicit StartTransactionAction(OcppCp *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(std::string, id_tag)
+  void play(Ts... x) override {
+    parent_->start_transaction(this->id_tag_.value(x...));
+  }
+ protected:
+  OcppCp *parent_;
+};
+
+// `ocpp.end_transaction` — stop the active transaction. id_tag is
+// optional: if provided, calls end_transaction_with_idtag (OCPP
+// parentIdTag-aware path used for RFID-swipe-to-stop); if absent,
+// falls through to the CSMS-initiated end_transaction(reason)
+// path. reason defaults to "Local"; valid OCPP 1.6 Reason values
+// are Local / Other / Remote / EVDisconnected / PowerLoss /
+// Reboot / SoftReset / HardReset / DeAuthorized.
+template<typename... Ts>
+class EndTransactionAction : public Action<Ts...> {
+ public:
+  explicit EndTransactionAction(OcppCp *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(std::string, id_tag)
+  TEMPLATABLE_VALUE(std::string, reason)
+  void play(Ts... x) override {
+    std::string reason_str = this->reason_.has_value() ? this->reason_.value(x...) : "Local";
+    if (this->id_tag_.has_value()) {
+      parent_->end_transaction_with_idtag(this->id_tag_.value(x...), reason_str);
+    } else {
+      parent_->end_transaction(reason_str);
+    }
+  }
+ protected:
+  OcppCp *parent_;
+};
+
+// ===== Triggers (component → YAML) =====
+
 // Fired when the CSMS asks the CP to start a transaction (RemoteStartTransaction).
 // The id_tag the CSMS provided is passed to the automation as a string.
 class RemoteStartTrigger : public Trigger<std::string> {

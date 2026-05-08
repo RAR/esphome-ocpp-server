@@ -166,3 +166,20 @@ ocpp:
     - lambda: 'ESP_LOGI("ci", "trigger %s connector=%d", requested_message.c_str(), connector_id);'
   on_data_transfer:
     - lambda: 'ESP_LOGI("ci", "datatransfer %s/%s", vendor_id.c_str(), message_id.c_str());'
+
+# Exercise the YAML actions at codegen so CI catches signature regressions.
+# In production these would be wired to whatever local trigger fires when
+# the EVSE wants to begin/end a transaction without an RFID swipe (e.g.
+# a "Require RFID for Charging" toggle being off).
+script:
+  - id: exercise_actions
+    then:
+      - ocpp.start_transaction:
+          id: ocpp_cp
+          id_tag: "auto"
+      - ocpp.end_transaction:
+          id: ocpp_cp
+      - ocpp.end_transaction:
+          id: ocpp_cp
+          id_tag: "auto"
+          reason: "EVDisconnected"
