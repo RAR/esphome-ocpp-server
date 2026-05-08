@@ -45,6 +45,10 @@ AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor", "number"]
 ocpp_ns = cg.esphome_ns.namespace("ocpp")
 OcppCp = ocpp_ns.class_("OcppCp", cg.Component)
 
+# YAML-callable actions
+StartTransactionAction = ocpp_ns.class_("StartTransactionAction", automation.Action)
+EndTransactionAction = ocpp_ns.class_("EndTransactionAction", automation.Action)
+
 RemoteStartTrigger = ocpp_ns.class_("RemoteStartTrigger", automation.Trigger.template(cg.std_string))
 RemoteStopTrigger = ocpp_ns.class_("RemoteStopTrigger", automation.Trigger.template(cg.int_))
 ResetTrigger = ocpp_ns.class_("ResetTrigger", automation.Trigger.template(cg.std_string))
@@ -432,3 +436,58 @@ async def to_code(config):
             ],
             conf,
         )
+
+
+# YAML actions
+#
+# `ocpp.start_transaction` — begin a charging transaction with a given
+# idTag. Use case: an automation that fires this when the EVSE enters
+# CHARGING with a "Require RFID" toggle off, so the CSMS sees a proper
+# StartTransaction.req rather than just a Charging status update with no
+# transaction record (which evcc reads as "still waiting on auth").
+@automation.register_action(
+    "ocpp.start_transaction",
+    StartTransactionAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(OcppCp),
+            cv.Required("id_tag"): cv.templatable(cv.string_strict),
+        }
+    ),
+    synchronous=True,
+)
+async def ocpp_start_transaction_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    template_ = await cg.templatable(config["id_tag"], args, cg.std_string)
+    cg.add(var.set_id_tag(template_))
+    return var
+
+
+# `ocpp.end_transaction` — stop the active transaction. id_tag is
+# optional (RFID-swipe-to-stop path when present, CSMS-initiated reason-
+# only path when absent). reason defaults to "Local" — valid OCPP 1.6
+# Reason values: Local / Other / Remote / EVDisconnected / PowerLoss /
+# Reboot / SoftReset / HardReset / DeAuthorized.
+@automation.register_action(
+    "ocpp.end_transaction",
+    EndTransactionAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(OcppCp),
+            cv.Optional("id_tag"): cv.templatable(cv.string_strict),
+            cv.Optional("reason"): cv.templatable(cv.string_strict),
+        }
+    ),
+    synchronous=True,
+)
+async def ocpp_end_transaction_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    if "id_tag" in config:
+        template_ = await cg.templatable(config["id_tag"], args, cg.std_string)
+        cg.add(var.set_id_tag(template_))
+    if "reason" in config:
+        template_ = await cg.templatable(config["reason"], args, cg.std_string)
+        cg.add(var.set_reason(template_))
+    return var

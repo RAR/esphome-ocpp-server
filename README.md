@@ -142,6 +142,23 @@ text_sensor:
     ocpp_id: ocpp_cp
     connection_state:                # disconnected / connecting / handshaking
       name: "OCPP State"             # / connected / ready / closing
+
+# YAML-callable actions to start/stop transactions from any automation.
+# Useful for Plug & Charge UX where you want to skip RFID auth — wire
+# these to a binary_sensor edge on the charging-state signal.
+binary_sensor:
+  - platform: template
+    id: is_charging
+    lambda: 'return id(some_evse_state).state == "CHARGING";'
+    on_press:
+      - ocpp.start_transaction:
+          id: ocpp_cp
+          id_tag: "auto"
+    on_release:
+      - ocpp.end_transaction:
+          id: ocpp_cp
+          id_tag: "auto"           # optional; absent → CSMS-initiated stop path
+          reason: "Local"          # optional; defaults to "Local"
 ```
 
 See [`example/rippleon.yaml`](example/rippleon.yaml) for a complete
