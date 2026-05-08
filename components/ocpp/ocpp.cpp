@@ -353,15 +353,20 @@ void OcppCp::register_callbacks_() {
           ESP_LOGI(TAG, "  -> CSMS disable: forcing offered measurands to 0");
         }
         csms_disabled_ = true;
-        // If MO has an active transaction (e.g. left over from evcc's
-        // remotestart=true auto-RemoteStart on boot), end it so the connector
-        // status moves to Finishing → Available and evcc stops reading
-        // status=Charging. endTransaction is a no-op if no transaction is
-        // running, so it's safe to call unconditionally.
-        if (::isTransactionActive(1)) {
-          ESP_LOGI(TAG, "  -> ending active OCPP transaction");
-          ::endTransaction(nullptr, "Local", 1);
-        }
+        // Do NOT call endTransaction here. SetChargingProfile{limit=0}
+        // is the standard OCPP 1.6 way for a CSMS to *pause* a session
+        // (e.g. evcc's PV-mode pause when there isn't enough solar) —
+        // the transaction stays open, the connector flips to status
+        // SuspendedEVSE while Current.Offered/Power.Offered drop to 0,
+        // and a subsequent SetChargingProfile{limit>0} resumes the
+        // same transaction. Earlier code here ended the transaction
+        // unconditionally as a workaround for evcc's `remotestart=true`
+        // boot config leaving a stale tx behind, but that workaround
+        // breaks the common pause/resume cycle: evcc throws "session
+        // terminated, please reconnect" and the loadpoint loses its
+        // auth state on every PV pause. The stale-tx-on-boot case is
+        // rare and better handled by an explicit boot-time cleanup if
+        // it actually shows up.
       } else if (first_period_positive) {
         if (csms_disabled_) {
           ESP_LOGI(TAG, "  -> CSMS re-enable: offered measurands track Number");
