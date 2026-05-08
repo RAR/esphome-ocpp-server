@@ -156,6 +156,15 @@ ocpp:
     "Fault": Faulted
   on_remote_start:
     - lambda: 'ESP_LOGI("ci", "remote start id=%s", id_tag.c_str());'
+    # Exercise the YAML actions from a trigger context (Ts non-empty).
+    # Without this, regressions in play()'s const-ref signature only
+    # surface in downstream firmware builds, not in this repo's CI.
+    - ocpp.start_transaction:
+        id: ocpp_cp
+        id_tag: !lambda 'return id_tag;'
+    - ocpp.end_transaction:
+        id: ocpp_cp
+        id_tag: !lambda 'return id_tag;'
   on_remote_stop:
     - lambda: 'ESP_LOGI("ci", "remote stop tx=%d", transaction_id);'
   on_reset:

@@ -20,7 +20,7 @@ class StartTransactionAction : public Action<Ts...> {
  public:
   explicit StartTransactionAction(OcppCp *parent) : parent_(parent) {}
   TEMPLATABLE_VALUE(std::string, id_tag)
-  void play(Ts... x) override {
+  void play(const Ts &... x) override {
     parent_->start_transaction(this->id_tag_.value(x...));
   }
  protected:
@@ -40,7 +40,7 @@ class EndTransactionAction : public Action<Ts...> {
   explicit EndTransactionAction(OcppCp *parent) : parent_(parent) {}
   TEMPLATABLE_VALUE(std::string, id_tag)
   TEMPLATABLE_VALUE(std::string, reason)
-  void play(Ts... x) override {
+  void play(const Ts &... x) override {
     std::string reason_str = this->reason_.has_value() ? this->reason_.value(x...) : "Local";
     if (this->id_tag_.has_value()) {
       parent_->end_transaction_with_idtag(this->id_tag_.value(x...), reason_str);
